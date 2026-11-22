@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /**
+ * Windows port: windows.mjs discovers native Codex transcripts; interactive work opens the native CLI.
  * [INPUT]: 依赖 ~/.claude/sessions 的会话登记（进程号、状态）、~/.claude/projects 和 ~/.codex/sessions 的对话记录（jsonl，只读）；
  *          依赖 tmux（每个窗口一台：-S ~/.cc-board/tmux/<会话名>.sock，11/16 之前开的在 -S ~/.cc-board/tmux.sock；每台由一个 /bin/sh 看护起在前台，退出状态写 <数据目录>/tmux-exit.log）和 Ghostty 的 AppleScript 接口往会话里送字；依赖 osascript 发系统通知；依赖 ./projects.mjs 认会话属于哪个项目；依赖 ./suggest.mjs 读输入框上的预判；依赖 ./limits.mjs 汇总各订阅的周额度；依赖 ./route.mjs 把 /api/new 里声明的档位 tier 翻成模型和强度；依赖 /usr/bin/open 打开正文里的路径（/api/open）；依赖 ./preview.mjs 起内置预览的只读端口；
  *          依赖 ./org.mjs 定「哪个窗口归哪个窗口管」；依赖 /usr/sbin/lsof 和 /bin/ps 认出是哪个会话在调 /api/new（测试用 CCBOARD_LSOF / CCBOARD_PS 换掉）；config.json 的 org.chief 指向的 JSON 文件（只读，点名总管）
@@ -41,6 +42,8 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
+import { discoverCodex, launchCodex } from './windows.mjs';
+const WINDOWS = process.platform === 'win32';
 import { fileURLToPath } from 'node:url';
 import { parseSuggest } from './suggest.mjs';                                   // 输入框上的灰字建议和「下一步 1/2/3」（只从屏幕读）
 import { codexLimits, claudeLimits, purgeTaps, TAP_PREFIX } from './limits.mjs';            // 顶栏右上角的各订阅周额度（Codex 读它自己的记录，Claude 读状态栏取数脚本存的文件）
@@ -60,7 +63,7 @@ const PORT = Number(process.env.CCBOARD_PORT || 4747);
 const PREVIEW_PORT = Number(process.env.CCBOARD_PREVIEW_PORT || PORT + 1000);   // 预览页的端口：另一个源，页面里的脚本碰不到总控台
 const SESS_DIR = path.join(HOME, '.claude/sessions');
 const PROJ_DIR = path.join(HOME, '.claude/projects');
-const DATA = process.env.CCBOARD_DATA || path.join(HOME, 'Library/Application Support/cc-board');
+const DATA = process.env.CCBOARD_DATA || (WINDOWS ? path.join(DIR, 'windows-data') : path.join(HOME, 'Library/Application Support/cc-board'));
 fs.mkdirSync(DATA, { recursive: true });
 const TOKEN_FILE = path.join(DATA, '.token');
 const ARCHIVE_FILE = path.join(DATA, 'archive.json');
@@ -99,7 +102,7 @@ if (!READONLY) {
 // 这样全机那几十份旧测试拷贝（-L ccboard + TMUX_TMPDIR）就算目录被删、退回默认目录，那里也没有线上服务器可杀。
 // 测试假主目录下自然是另一个路径；CCBOARD_TMUX_SOCKET 给了就用它。路径不许带引号（「去终端」要把它放进 shell 命令里）
 const TMUX_SOCKET = (SANDBOX && process.env.CCBOARD_TMUX_SOCKET) || path.join(HOME, '.cc-board', 'tmux.sock');   // 线上固定用主目录下这个，环境变量只在试验场里认
-if (/['"\\]/.test(TMUX_SOCKET)) throw new Error('tmux 套接字路径里不能有引号或反斜杠：' + TMUX_SOCKET);
+if (!WINDOWS && /['"\\]/.test(TMUX_SOCKET)) throw new Error('tmux 套接字路径里不能有引号或反斜杠：' + TMUX_SOCKET);
 try { fs.mkdirSync(path.dirname(TMUX_SOCKET), { recursive: true, mode: 0o700 }); } catch (e) { console.log(`tmux ${new Date().toISOString()} 建不了套接字目录 ${path.dirname(TMUX_SOCKET)}：${e.message}`); }
 // 每个窗口一台 tmux（P0-0，11/16）：一台服务器死掉只带走一个窗口。新开的（新任务、接回来）住在 <套接字目录>/tmux/<会话名>.sock；
 // 11/16 这一版上线之前开的窗口留在 TMUX_SOCKET（tmux.sock）上照常认、不迁移。枚举两处都扫。测试里 TMUX_DIR 跟着 CCBOARD_TMUX_SOCKET 走，也是 -S 绝对路径
@@ -999,6 +1002,7 @@ function findRollout(a) {                                  // 启动之后新出
   return null;
 }
 function codexSessions(seen) {
+  if (WINDOWS) return windowsSessions(seen);
   const out = []; let dirty = false;
   for (const [name, a] of Object.entries(agents)) {
     const pane = panes.find((x) => x.name === name);
@@ -1021,6 +1025,29 @@ function codexSessions(seen) {
     out.push(o);
   }
   if (dirty) saveAgents();
+  return out;
+}
+
+let windowsCatalog = [], windowsCatalogAt = 0;
+function windowsSessions(seen) {
+  if (Date.now() - windowsCatalogAt > 10000) { windowsCatalog = discoverCodex(HOME); windowsCatalogAt = Date.now(); }
+  const out = [];
+  for (const a of windowsCatalog) {
+    let tr = codexTracks.get(a.sid);
+    if (!tr) { tr = new Track(a.sid, a.cwd, a.file); codexTracks.set(a.sid, tr); }
+    try { tr.refresh(); } catch { continue; }
+    const st = tr.st; seen.add(a.sid);
+    const o = { sid: a.sid, provider: 'codex', pid: 0, cwd: a.cwd, startedAt: a.at,
+      status: st.busy ? 'busy' : 'idle', statusAt: null, screen: null, dialog: null,
+      regName: '', userNamed: !!a.title, title: a.title || (st.firstPrompt || st.prompt || 'Codex 会话').replace(/\s+/g, ' ').slice(0, 50),
+      aiTitle: null, custom: null, prompt: st.prompt, promptAt: st.promptAt, ...deliver(st.result), resultAt: st.resultAt, done: st.done,
+      note: st.note, noteAt: st.noteAt, tool: st.tool, steps: st.steps, turnAt: st.turnAt, lastAt: st.lastAt, ask: null,
+      channel: null, tmux: null, order: -a.mtime, model: null, effort: null, ctx: null, sub: 0, halt: st.halt, file: a.file, codeMode: false, eta: null };
+    o.quiet = tr.tick(o.status === 'busy', scanDt); o.alert = alertOf(o);
+    o.project = classify(st.files, { title: o.title, prompt: o.prompt, cwd: o.cwd, home: HOME });
+    out.push(o);
+  }
+  for (const sid of codexTracks.keys()) if (!seen.has(sid)) codexTracks.delete(sid);
   return out;
 }
 
@@ -1555,6 +1582,7 @@ function winSocks() {
 // 11/18 线上 5 条活窗口的记录被删：单台死套接字报错仍能是活窗格，按上一拍的 pid 保留，不拖住全局 sure。
 // 路径暂时消失交给跨拍裁剪；一小时清死套接字的原规则不变。
 async function refreshPanes() {
+  if (WINDOWS) { panes = []; return; }
   const socks = [TMUX_SOCKET, ...winSocks()];
   const prev = new Map(); for (const p of panes) { if (!prev.has(p.sock)) prev.set(p.sock, []); prev.get(p.sock).push(p); }
   const res = await Promise.all(socks.map((sock) => tmuxAt(sock, ['list-panes', '-a', '-F', '#{session_name}\t#{pane_pid}\t#{session_created}\t#{pane_current_path}'], { timeout: 4000 }).then((r) => ({ sock, r }))));
@@ -1729,6 +1757,7 @@ async function waitDelivered(sid, text, since, files = []) {
 }
 
 async function sendTo(sid, text, rawFiles) {
+  if (WINDOWS) return { ok: false, error: 'Windows 版请在原 Codex 聊天或「去终端」中继续对话。看板不会向正在运行的桌面聊天注入消息。' };
   const files = await cleanFiles(rawFiles);
   if (!text && !files.length) return { ok: false, error: '没有内容' };
   const s0 = findSession(sid);
@@ -1766,6 +1795,10 @@ async function sendTo(sid, text, rawFiles) {
 async function focusSession(sid) {
   const s = findSession(sid);
   if (!s) return { ok: false, error: '这个会话已经不在了' };
+  if (WINDOWS) {
+    if (s.status === 'busy') return { ok: false, error: '此会话仍在运行，请回到原 Codex 聊天。结束后可在终端恢复。' };
+    return launchCodex(codexBin, s.cwd, ['resume', s.sid]);
+  }
   if (s.channel === 'tmux') return openAttach(s.tmux);
   if (!s.term) return { ok: false, error: '没对上它在 Ghostty 里的标签' };
   const r = await osa(FOCUS_GHOSTTY, [s.term]);
@@ -2431,6 +2464,11 @@ function withAuto(o) {           // 给界面：在倒数（armed：text 是真�
 const launches = new Map();   // tmux 会话名 → {at, prompt, cwd}
 let codexBin = null;
 async function findCodex() {
+  if (WINDOWS) {
+    const r = await run('where.exe', ['codex.exe']);
+    codexBin = r.out.split(/\r?\n/).map(x => x.trim()).find(x => fs.existsSync(x)) || null;
+    return;
+  }
   const r = await run('/bin/zsh', ['-lc', 'command -v codex']);
   const p = r.out.split('\n').map((x) => x.trim()).filter((x) => x.startsWith('/')).pop();
   codexBin = p && fs.existsSync(p) ? p : null;
@@ -2444,7 +2482,7 @@ function providers() {
   try { const t = fs.readFileSync(path.join(CODEX_HOME, 'config.toml'), 'utf8');
     xm = (t.match(/^model\s*=\s*"([^"]+)"/m) || [])[1] || null; xe = (t.match(/^model_reasoning_effort\s*=\s*"([^"]+)"/m) || [])[1] || null; } catch {}
   return {
-    claude: { label: 'Claude Code', ok: true, models: ['fable', 'opus', 'sonnet', 'haiku'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultModel: cm, defaultEffort: ce,
+    claude: { label: 'Claude Code', ok: !WINDOWS, models: ['fable', 'opus', 'sonnet', 'haiku'], efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultModel: cm, defaultEffort: ce,
       accounts: acctList, login: acctList.length ? loginNow : null, defaultAccount: CONFIG.defaultAccount || null },
     ...(CONFIG.codex ? { codex: { label: 'Codex', ok: !!codexBin, models: xm ? [xm] : [], efforts: ['low', 'medium', 'high', 'xhigh'], defaultModel: xm, defaultEffort: xe } } : {}),
   };
@@ -2783,6 +2821,16 @@ const SAFE_ARG = /^[\w.\-:\[\]\/]{1,64}$/;
 const FOLDER_NOTE = '\n\n<system-reminder>这条任务是从总控台新建的，工作目录是主目录。用户没有指定文件夹，也不想被问放在哪里。请自己判断它属于哪个现有项目（先查记忆和 ~/Projects 下的文件夹），在那个项目的文件夹里做；是全新的东西就在 ~/Projects 下新建一个文件夹。不要把工程文件直接放在主目录。</system-reminder>';
 const sameDir = (a, b) => { try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return a === b; } };
 async function newSession(prompt, cwd, opt = {}) {
+  if (WINDOWS) {
+    if (opt.provider && opt.provider !== 'codex') return { ok: false, error: '此 Windows 版使用 Codex' };
+    if (opt.files?.length) return { ok: false, error: '请在 Codex 终端添加附件' };
+    const dir = !cwd || cwd === '~' ? (process.env.CCBOARD_WORKSPACE || HOME) : String(cwd);
+    const args = [];
+    if (opt.model) args.push('-m', String(opt.model));
+    if (opt.effort) args.push('-c', 'model_reasoning_effort=' + JSON.stringify(String(opt.effort)));
+    if (prompt) args.push(String(prompt));
+    return launchCodex(codexBin, dir, args);
+  }
   let dir = String(cwd || '~').trim().replace(/^~(?=$|\/)/, HOME);
   if (!path.isAbsolute(dir)) dir = path.join(HOME, dir);
   try { if (!fs.statSync(dir).isDirectory()) throw new Error(); } catch { return { ok: false, error: '没有这个文件夹：' + dir }; }
@@ -2965,6 +3013,8 @@ const handle = async (req, res, via) => {
     }
     if (!u.pathname.startsWith('/api/')) return reply(res, 404, { error: 'not found' });
     if (!rem && req.headers['x-ccboard'] !== TOKEN) return reply(res, 403, { error: 'no token' });   // 远程的已经在上面核过设备凭证
+    if (WINDOWS && req.method === 'POST' && /^\/api\/(archive|unarchive|delete|answer|kill|crash|restore|open|reveal|upload)(\/|$)/.test(u.pathname))
+      return reply(res, 200, { ok: false, error: '此操作请在原 Codex 聊天或 Windows 资源管理器中完成。' });
 
     if (req.method === 'GET' && u.pathname === '/api/state') {
       if (u.searchParams.get('f') === '1' && !rem) uiFocusAt = Date.now();            // 你正看着总控台：停住了由界面提示，不另发系统通知（手机上看着不算）

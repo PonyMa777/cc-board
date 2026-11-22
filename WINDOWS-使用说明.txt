@@ -1,0 +1,22 @@
+cc-board Windows / Codex 本地适配版
+
+双击 Start-CCBoard.cmd，或桌面的 CC Board 快捷方式。
+以 Edge 独立窗口显示；后台服务仅监听本机 127.0.0.1:4747。
+关闭窗口后服务继续运行。运行 Stop-CCBoard.ps1 停止看板，不停止 Codex。
+
+读取当前 Windows 用户 .codex/sessions 下最近修改的 60 份会话日志，
+每 10 秒更新会话列表，每约 1.2 秒更新已发现会话的内容。
+原 Codex 日志只读。审完了/先放着等看板状态保存在 windows-data。
+“运行中”依据日志事件，不代表实时进程检测；异常退出可能留下过时状态。
+子代理日志不纳入主会话列表。
+
+新任务：在原生 Windows Codex CLI 窗口启动，使用现有登录。
+默认工作目录为本安装目录的上一级，可在启动脚本中修改 CCBOARD_WORKSPACE。
+去终端：仅空闲会话可用，通过 codex resume 恢复；请勿同时在原聊天继续同一会话。
+正在运行的聊天请回 Codex 桌面应用操作。
+
+未移植：向桌面聊天直接发消息、macOS Ghostty/tmux 控制、钥匙串、系统通知、
+从看板归档/删除原会话、附件上传和系统文件打开。这些操作保留在 Codex 或资源管理器完成。
+无需安装 npm 运行依赖；需要现有 Node.js 22+、Codex CLI 和浏览器。
+临时文件使用 D:\ChatGPT-Temp\cc-board-<每次启动的唯一编号>。
+这是基于上游源码的本地 Windows 适配，不是上游官方 Windows 发行版。

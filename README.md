@@ -1,5 +1,9 @@
 # cc-board
 
+> **Windows / Codex adaptation:** This repository includes a Windows port of [Lfrangt/cc-board](https://github.com/Lfrangt/cc-board). Requires Node.js 22+, Codex CLI, and a browser. Double-click `Start-CCBoard.cmd`; run `Stop-CCBoard.ps1` to stop the board. See [Windows instructions](WINDOWS-使用说明.txt) for supported features and limitations. The upstream macOS documentation follows below. Original MIT license and history are preserved.
+>
+> Local runtime data (`windows-data/`), conversation logs, and authentication tokens are excluded from this repository. Windows temporary files use a unique directory under `D:\ChatGPT-Temp` for each launch; adjust the launcher if your machine uses another drive.
+
 **One window for every Claude Code session you're running.**
 Delivered work comes up sharp and in front. Sessions still working sit blurred behind. When one stops, its card says why.
 

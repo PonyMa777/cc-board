@@ -1999,7 +1999,7 @@ function paint(st) {
   if (fe.dataset.k !== fk) { fe.dataset.k = fk; fe.innerHTML = segs.map(([k, t, n, c]) => '<button data-f="' + k + '" class="' + c + '" aria-pressed="' + (mode === 'wall' && filter === k) + '"' + (mode === 'flow' && k !== 'all' && !n ? ' disabled' : '') + '>' + T(t) + '<b class="num">' + n + '</b></button>').join(''); }
   const ab = T('归档') + (st.archived ? ' ' + st.archived : ''); if ($('#archBtn').textContent !== ab) $('#archBtn').textContent = ab;
   remoteInfo = st.remote || null; if ($('#pairBtn').hidden !== !st.remote) { $('#pairBtn').hidden = !st.remote; document.body.classList.toggle('remote-on', !!st.remote); }      // 只有 config.json 的 remote 开着、而且是本机界面时服务才给 remote
-  const hint = st.ghostty ? '' : T('Ghostty 没连上，暂时不能回你标签里的会话'); if ($('#hint').textContent !== hint) $('#hint').textContent = hint;
+  const hint = navigator.platform.startsWith('Win') ? 'Windows · 最近 60 个 Codex 会话 · 状态来自日志 · 请回原聊天继续，或结束后点「去终端」恢复' : st.ghostty ? '' : T('Ghostty 没连上，暂时不能回你标签里的会话'); if ($('#hint').textContent !== hint) $('#hint').textContent = hint;
   const ttl = (nTodo ? '(' + nTodo + ') ' : '') + T('总控台'); if (document.title !== ttl) document.title = ttl;
   if (badgeN !== nTodo) { badgeN = nTodo; tell({ type: 'badge', n: nTodo }); }        // Dock 角标只在数变了时告诉外壳
   for (const n of st.notices || []) toast(n.text);
@@ -2333,10 +2333,10 @@ function followDetail() {
 }
 
 // ── 新任务：交给谁、用哪个模型、多大强度 ──
-let pick = store('ccb_new') || { provider: 'claude', model: {}, effort: {} };   // pick.account：选的账号 id，'' = 默认（config 的 defaultAccount；没设就是钥匙串当前登录的那个号）
+let pick = store('ccb_new') || { provider: navigator.platform.startsWith('Win') ? 'codex' : 'claude', model: {}, effort: {} };
 function fillNew() {
   const P = (last && last.providers) || { claude: { label: 'Claude Code', ok: true, models: [], efforts: [] } };
-  if (!P[pick.provider] || !P[pick.provider].ok) pick.provider = 'claude';
+  if (!P[pick.provider] || !P[pick.provider].ok) pick.provider = Object.keys(P).find(k => P[k].ok) || 'codex';
   $('#nProvField').style.display = Object.keys(P).length < 2 ? 'none' : '';     // config 里 codex 没打开时服务只报 Claude Code 一家：不显示「交给谁」
   $('#nProv').innerHTML = Object.entries(P).map(([k, v]) => '<button data-prov="' + k + '" aria-pressed="' + (pick.provider === k) + '"' + (v.ok ? '' : ' disabled title="这台机器上没找到它的命令"') + ' style="height:auto">' + esc(v.label) + '</button>').join('');
   const p = P[pick.provider];

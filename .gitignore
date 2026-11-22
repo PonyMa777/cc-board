@@ -3,6 +3,7 @@ build/
 server.log
 test/.tmp/
 node_modules/
+windows-data/
 .DS_Store
 
 # local only: previous live copies, private launch/posting notes
