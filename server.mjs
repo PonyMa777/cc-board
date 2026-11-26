@@ -43,6 +43,14 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { discoverCodex, launchCodex } from './windows.mjs';
+import { codexRequest } from './codex-rpc.mjs';
+import { runCodexStage } from './codex-stage.mjs';
+import { WorkflowManager } from './workflows.mjs';
+import { ProjectChief } from './project-chief.mjs';
+import { resolveChiefModel } from './chief-model.mjs';
+import { workflowOrg, workflowFailure, workflowExecution } from './workflow-org.mjs';
+import { verifyValidationSources } from './validation-workspace.mjs';
+import { readRecap } from './recap.mjs';
 const WINDOWS = process.platform === 'win32';
 import { fileURLToPath } from 'node:url';
 import { parseSuggest } from './suggest.mjs';                                   // 输入框上的灰字建议和「下一步 1/2/3」（只从屏幕读）
@@ -1020,7 +1028,8 @@ function codexSessions(seen) {
       prompt: st.prompt || a.prompt || null, promptAt: st.promptAt, ...deliver(st.result), resultAt: st.resultAt, done: st.done,
       note: st.note, noteAt: st.noteAt, tool: st.tool, steps: st.steps, turnAt: st.turnAt, lastAt: st.lastAt, ask: null,
       channel: 'tmux', tmux: name, order: 5e5, model: a.model || null, effort: a.effort || null, ctx: null, sub: 0, halt: st.halt, file: tr.file, codeMode: false, eta: st.eta || null };   // Codex 读不到上下文和子 agent；Code Mode 只有 Claude Code 有
-    o.quiet = tr.tick(o.status === 'busy', scanDt); o.alert = alertOf(o);
+    workflowExecution(o, workflows?.list() || []);
+    o.quiet = tr.tick(o.status === 'busy', scanDt); o.alert = workflowFailure(o, workflows?.list() || []) || alertOf(o);
     o.project = classify(st.files, { title: o.title, prompt: o.prompt, cwd: o.cwd, home: HOME, pin: pinOf(name) });
     out.push(o);
   }
@@ -1029,6 +1038,30 @@ function codexSessions(seen) {
 }
 
 let windowsCatalog = [], windowsCatalogAt = 0;
+const windowsArchiving = new Set();
+async function archiveWindowsSession(sid) {
+  if (!/^[0-9a-f-]{36}$/i.test(sid)) return { ok: false, error: '无效的 Codex 会话编号。' };
+  if (windowsArchiving.has(sid)) return { ok: false, error: '此会话正在归档，请稍候。' };
+  windowsCatalogAt = 0; scanSessions();
+  const session = sessions.find(s => s.sid === sid && s.provider === 'codex');
+  if (!session) return { ok: false, error: '未找到活动会话，请刷新列表。' };
+  // A separate app-server cannot reliably interrupt a turn owned by the desktop.
+  if (session.status === 'busy' || workflows?.list().some(j => j.status === 'running' && j.stages.some(stage => stage.threadId === sid && stage.status === 'running'))) return { ok: false, error: '此会话仍在运行，请等它结束或在 Codex 中停止后再归档。' };
+  if (!codexBin) return { ok: false, error: '未找到 Codex CLI，无法归档。' };
+  windowsArchiving.add(sid);
+  leaving.set(sid, Date.now()); // Polls can observe the move before the RPC response arrives.
+  try {
+    await codexRequest(codexBin, HOME, 'thread/archive', { threadId: sid });
+    leaving.set(sid, Date.now());
+    return { ok: true, nativeArchive: true };
+  } catch (e) {
+    if (fs.existsSync(session.file)) leaving.delete(sid);
+    if (/already has an active writer/i.test(e.message)) return { ok: false, code: 'CODEX_WRITER_OWNED', error: '聊天仍由另一个 Codex 服务持有，尚未归档。这不一定代表任务正在运行。' };
+    return { ok: false, error: 'Codex 归档失败：' + e.message };
+  } finally {
+    windowsArchiving.delete(sid); windowsCatalogAt = 0; scanSessions();
+  }
+}
 function windowsSessions(seen) {
   if (Date.now() - windowsCatalogAt > 10000) { windowsCatalog = discoverCodex(HOME); windowsCatalogAt = Date.now(); }
   const out = [];
@@ -1037,13 +1070,14 @@ function windowsSessions(seen) {
     if (!tr) { tr = new Track(a.sid, a.cwd, a.file); codexTracks.set(a.sid, tr); }
     try { tr.refresh(); } catch { continue; }
     const st = tr.st; seen.add(a.sid);
-    const o = { sid: a.sid, provider: 'codex', pid: 0, cwd: a.cwd, startedAt: a.at,
+    const o = { sid: a.sid, provider: 'codex', nativeArchive: true, pid: 0, cwd: a.cwd, startedAt: a.at,
       status: st.busy ? 'busy' : 'idle', statusAt: null, screen: null, dialog: null,
       regName: '', userNamed: !!a.title, title: a.title || (st.firstPrompt || st.prompt || 'Codex 会话').replace(/\s+/g, ' ').slice(0, 50),
       aiTitle: null, custom: null, prompt: st.prompt, promptAt: st.promptAt, ...deliver(st.result), resultAt: st.resultAt, done: st.done,
       note: st.note, noteAt: st.noteAt, tool: st.tool, steps: st.steps, turnAt: st.turnAt, lastAt: st.lastAt, ask: null,
       channel: null, tmux: null, order: -a.mtime, model: null, effort: null, ctx: null, sub: 0, halt: st.halt, file: a.file, codeMode: false, eta: null };
-    o.quiet = tr.tick(o.status === 'busy', scanDt); o.alert = alertOf(o);
+    workflowExecution(o, workflows?.list() || []);
+    o.quiet = tr.tick(o.status === 'busy', scanDt); o.alert = workflowFailure(o, workflows?.list() || []) || alertOf(o);
     o.project = classify(st.files, { title: o.title, prompt: o.prompt, cwd: o.cwd, home: HOME });
     out.push(o);
   }
@@ -2463,6 +2497,20 @@ function withAuto(o) {           // 给界面：在倒数（armed：text 是真�
 
 const launches = new Map();   // tmux 会话名 → {at, prompt, cwd}
 let codexBin = null;
+let workflows = null, workflowError = null, projectChief = null, chiefError = null;
+if (WINDOWS && CONFIG.codex) {
+  try {
+    workflows = new WorkflowManager({ file: path.join(DATA, 'workflows.json'), readonly: READONLY,
+      stageContext: (job, role) => projectChief?.context(job, role) || '',
+      onStage: (job, stage) => projectChief?.record(job, stage),
+      onJob: job => projectChief?.record(job),
+      resolveChiefModel: () => resolveChiefModel(codexBin, HOME),
+      verifySource: (cwd, manifest) => verifyValidationSources(cwd, manifest),
+      runStage: args => runCodexStage({ ...args, bin: codexBin, home: HOME }) });
+    try { projectChief = new ProjectChief({ configFile: path.join(DATA, 'chief-teams.json'), file: path.join(DATA, 'chief-chats.json'), workflows, readonly: READONLY,
+      runStage: args => runCodexStage({ ...args, bin: codexBin, home: HOME }) }); } catch (error) { chiefError = error.message; }
+  } catch (e) { workflowError = e.message; }
+}
 async function findCodex() {
   if (WINDOWS) {
     const r = await run('where.exe', ['codex.exe']);
@@ -2753,7 +2801,7 @@ function orgView() {
     if (sid.startsWith(GONE)) continue;             // org.mjs 本来就不出 gone 项；这里再挡一道，界面拿到的键都是活会话
     const x = extra.get(sid) || { from: [], turn: null }; nodes[sid] = { role: n.role, boss: n.boss, via: n.via, n: n.n, last: n.last, handed: !!n.handed, from: x.from, for: x.turn };
   }
-  return { chief: o.chief, gen: ch.sid && o.chief === ch.sid ? ch.gen : null, nodes };
+  return workflowOrg({ chief: o.chief, gen: ch.sid && o.chief === ch.sid ? ch.gen : null, nodes }, sessions, workflows?.list() || [], { explicitOnly: WINDOWS });
 }
 let orgErrAt = 0;
 function orgSafe() {           // 架构视图出错不能把整个 /api/state 拖垮：出错给空的，日志一分钟最多一行
@@ -3013,7 +3061,7 @@ const handle = async (req, res, via) => {
     }
     if (!u.pathname.startsWith('/api/')) return reply(res, 404, { error: 'not found' });
     if (!rem && req.headers['x-ccboard'] !== TOKEN) return reply(res, 403, { error: 'no token' });   // 远程的已经在上面核过设备凭证
-    if (WINDOWS && req.method === 'POST' && /^\/api\/(archive|unarchive|delete|answer|kill|crash|restore|open|reveal|upload)(\/|$)/.test(u.pathname))
+    if (WINDOWS && req.method === 'POST' && /^\/api\/(unarchive|delete|answer|kill|crash|restore|open|reveal|upload)(\/|$)/.test(u.pathname))
       return reply(res, 200, { ok: false, error: '此操作请在原 Codex 聊天或 Windows 资源管理器中完成。' });
 
     if (req.method === 'GET' && u.pathname === '/api/state') {
@@ -3026,12 +3074,16 @@ const handle = async (req, res, via) => {
         archived: Object.values(archive.items).filter((x) => x.state !== 'restoring').length, lost, crash: crashView(), stallMs: STALL_MS, sandbox: SANDBOX, limits: LIMITS };
       out.sessions = out.sessions.map(withSnooze);                                                       // 先放着带时间：推迟中（没到点、没被叫醒）的会话多一个 snooze
       out.processed = processedView(out.sessions);                                                       // 「审完了」跨设备：本机端口、远程端口都给（见 processedView）
+      if (WINDOWS) out.workflows = { enabled: !!workflows && !!codexBin && !READONLY, error: workflowError,
+        jobs: workflows ? workflows.list().map(({ id, prompt, mode, status, phase, updatedAt }) => ({ id, prompt: prompt.slice(0, 160), mode, status, phase, updatedAt })) : [] };
       if (REMOTE.on && !rem) out.remote = { hosts: REMOTE.hosts, devices: devices.size, port: REMOTE_PORT, ...(remoteDown ? { down: remoteDown } : {}) };      // 本机界面据此显示「手机」按钮；关着时没有这个键，和以前一样
       out.org = orgSafe(); noteRoles(out.org);                                                             // 架构视图：谁归谁管（只读，peek 不 peek 一样）
       if (peek) out.peek = true; else notices = [];
       if (u.searchParams.has('v')) return reply(res, 200, stateSince(out, u.searchParams.get('v')));   // 界面：只回变过的（见 stateSince）
       return reply(res, 200, out);
     }
+    if (req.method === 'GET' && u.pathname === '/api/workflows') return reply(res, 200, { ok: !!workflows, jobs: workflows?.list() || [], error: workflowError });
+    if (req.method === 'GET' && u.pathname === '/api/chief') return reply(res, 200, { ok: !!projectChief, teams: projectChief?.list() || [], error: chiefError });
     if (req.method === 'GET' && u.pathname === '/api/archive') {
       const items = Object.values(archive.items).sort((a, b) => b.archivedAt - a.archivedAt)
         .map((x) => ({ sid: x.sid, title: x.title, cwd: x.cwd, prompt: x.prompt, resultAt: x.resultAt, archivedAt: x.archivedAt, state: x.state, note: x.note || null, why: x.why || null, auto: x.auto === true }));
@@ -3048,13 +3100,27 @@ const handle = async (req, res, via) => {
       try { return reply(res, 200, readDiff(tr, wanted, cwd)); }
       catch (e) { console.error('diff 读记录失败：' + String(e.message).replace(/[\r\n]/g, ' ')); return reply(res, 500, { ok: false, error: '没读到改动' }); }
     }
+    if (req.method === 'GET' && u.pathname === '/api/recap') {
+      const sid = u.searchParams.get('sid') || '';
+      const tr = tracks.get(sid) || codexTracks.get(sid);
+      const stored = archive.items[sid];
+      const file = tr?.file || stored?.file;
+      const session = sessions.find(s => s.sid === sid);
+      const provider = session?.provider || stored?.provider || (codexTracks.has(sid) ? 'codex' : 'claude');
+      if (!file || (provider === 'codex' && !CONFIG.codex)) return reply(res, 404, { ok: false, status: 'unavailable', error: '未能定位这段对话记录；这不代表没有历史。' });
+      const result = await readRecap(file, { provider });
+      const version = u.searchParams.get('version');
+      const current = session ? { status: session.status, need: session.digest?.need || null, question: session.digest?.ask || null, alert: session.alert?.kind || null, at: session.resultAt || session.lastAt || null } : null;
+      if (u.searchParams.get('check') === '1') return reply(res, 200, { ok: result.ok, status: result.status, version: result.version, stale: !!version && version !== result.version, current });
+      return reply(res, 200, { ...result, sid, title: session?.title || stored?.title || '', current, stale: !!version && version !== result.version });
+    }
     if (req.method === 'GET' && u.pathname === '/api/turns') {
       const sid = u.searchParams.get('sid') || '';
       const tr = tracks.get(sid) || codexTracks.get(sid);
       const file = (tr && tr.file) || (archive.items[sid] && archive.items[sid].file);
       if (!file || !fs.existsSync(file) || (file.includes('/.codex/') && !CONFIG.codex)) return reply(res, 404, { error: '没有这段对话记录' });
       const n = Math.min(40, Number(u.searchParams.get('n')) || 12);
-      return reply(res, 200, { turns: file.includes('/.codex/') ? readCodexTurns(file, n) : readTurns(file, n) });
+      return reply(res, 200, { turns: codexTracks.has(sid) || archive.items[sid]?.provider === 'codex' || /[\\/]\.codex[\\/]/.test(file) ? readCodexTurns(file, n) : readTurns(file, n) });
     }
     if (REMOTE.on && !rem && req.method === 'GET' && u.pathname === '/api/remote/devices') {   // 配对管理只在本机：列出已配对的设备（不给哈希）
       if (!fromBoard(req)) return reply(res, 403, { ok: false, error: '只接受总控台自己的页面' });
@@ -3159,6 +3225,12 @@ const handle = async (req, res, via) => {
     if (u.pathname === '/api/send') {
       return reply(res, 200, await sendTo(String(body.sid || ''), String(body.text || '').trim(), body.files));
     }
+    if (u.pathname === '/api/chief/send') {
+      if (!fromBoard(req) || rem) return reply(res, 403, { ok: false, error: '只接受本机项目 Chief 的明确操作。' });
+      if (!projectChief || !codexBin) return reply(res, 200, { ok: false, error: chiefError || '项目 Chief 尚未就绪。' });
+      try { return reply(res, 200, { ok: true, message: await projectChief.send(body) }); }
+      catch (error) { return reply(res, 200, { ok: false, error: error.message }); }
+    }
     if (u.pathname === '/api/upload') {             // 粘贴 / 拖进来的文件：存到 uploads，回它的路径
       const m = String(body.data || '').match(/^(?:data:[^;,]*;base64,)?([A-Za-z0-9+/=\s]+)$/);
       if (!m) return reply(res, 200, { ok: false, error: '文件内容读不出来' });
@@ -3176,10 +3248,36 @@ const handle = async (req, res, via) => {
       return reply(res, 200, { ok: true, files: out });
     }
     if (u.pathname === '/api/focus') return reply(res, 200, await focusSession(String(body.sid || '')));
-    if (u.pathname === '/api/archive') return reply(res, 200, archiveSession(String(body.sid || ''), body.force === true));
+    if (u.pathname === '/api/archive') return reply(res, 200, WINDOWS ? await archiveWindowsSession(String(body.sid || '')) : archiveSession(String(body.sid || ''), body.force === true));
     if (u.pathname === '/api/unarchive') return reply(res, 200, await unarchive(String(body.sid || '')));
     if (u.pathname === '/api/delete') return reply(res, 200, await deleteSession(String(body.sid || '')));
+    if (u.pathname === '/api/workflows/action') {
+      if (!fromBoard(req) || rem) return reply(res, 403, { ok: false, error: '只接受本机总控台的明确操作。' });
+      if (!workflows) return reply(res, 200, { ok: false, error: workflowError || '任务流程不可用。' });
+      try {
+        let job;
+        if (body.action === 'cancel') job = workflows.cancel(body.id);
+        else if (body.action === 'approve') job = workflows.approve(body.id, body.approvalId, body.decision, body.text);
+        else if (body.action === 'resume') job = workflows.resume(body.id, { requestId: body.requestId, expectedStage: body.expectedStage, note: body.text || '' });
+        else if (body.action === 'acknowledgeStop') job = workflows.acknowledgeStop(body.id, { requestId: body.requestId });
+        else if (body.action === 'discuss') job = workflows.discuss(body.id, body.text, body.requestId, body.expectedRevision);
+        else if (body.action === 'confirm') job = workflows.confirm(body.id, { mode: body.mode, requestId: body.requestId, expectedRevision: body.expectedRevision });
+        else throw new Error('无效的任务操作。');
+        return reply(res, 200, { ok: true, job });
+      } catch (e) { return reply(res, 200, { ok: false, error: e.message }); }
+    }
     if (u.pathname === '/api/new') {
+      if (body.taskMode !== undefined) {
+        if (!fromBoard(req) || rem) return reply(res, 403, { ok: false, error: '只接受本机总控台的明确操作。' });
+        if (!workflows || !codexBin) return reply(res, 200, { ok: false, error: workflowError || 'Codex 任务流程尚未就绪。' });
+        if (body.provider !== 'codex' || body.files?.length || body.tier || body.codeMode) return reply(res, 200, { ok: false, error: '任务流程仅支持 Codex 文本任务；请在任务中给出已有文件路径。' });
+        try {
+          const cwd = !body.cwd || body.cwd === '~' ? (process.env.CCBOARD_WORKSPACE || HOME) : String(body.cwd);
+          if (!path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('工作目录不存在或不是绝对路径。');
+          const job = workflows.create({ prompt: body.prompt, cwd, mode: body.taskMode, model: body.model || '', effort: body.effort || '', requestId: body.requestId });
+          return reply(res, 200, { ok: true, workflowId: job.id });
+        } catch (e) { return reply(res, 200, { ok: false, error: e.message }); }
+      }
       // 开窗口的一方（比如总指挥窗口）可以只说档位 tier（heavy / standard / light），由 route.mjs 翻成模型和强度；不说档位就和以前一样。
       // 档位写错在这里直接拦下，不开窗口：悄悄退回默认，调用方会以为已经省了钱。账号（account）是另一维，和档位互不影响。
       // 谁开的这个窗口（架构视图）：带 Origin 的是界面自己发的 = 他本人，不记；body.from 正好是一个活会话的 sid 就用它；

@@ -13,7 +13,7 @@ NODE="${NODE:-$(command -v node || echo "$HOME/.local/node/bin/node")}"
 [ -x "$NODE" ] || { echo "node not found: install Node 22+ or set NODE=/path/to/node" >&2; exit 1; }
 NAME="${CCBOARD_APP_NAME:-总控台}"; STAGE="build/$NAME.app"; DEST="$HOME/Applications/$NAME.app"
 LIVE="$HOME/Library/Application Support/cc-board/app"
-push_live() { mkdir -p "$LIVE"; /bin/cp server.mjs ui.html projects.mjs suggest.mjs limits.mjs statusline-tap.mjs accounts.mjs route.mjs preview.mjs judge.mjs org.mjs autopilot.mjs remote.mjs qr.mjs "$LIVE/"; }
+push_live() { mkdir -p "$LIVE"; /bin/cp server.mjs ui.html projects.mjs suggest.mjs limits.mjs statusline-tap.mjs accounts.mjs route.mjs preview.mjs judge.mjs org.mjs autopilot.mjs remote.mjs qr.mjs windows.mjs codex-rpc.mjs codex-stage.mjs workflows.mjs recap.mjs chief-model.mjs workflow-org.mjs validation-workspace.mjs project-chief.mjs "$LIVE/"; }
 if [ "$1" = "update" ]; then
   /usr/bin/grep -q 'TMUX_SOCKET' server.mjs || { echo "server.mjs 还是 11/16 之前的 tmux -L ccboard 写法（没有 TMUX_SOCKET），拒绝上线：先合并 sock-fix" >&2; exit 1; }
   "$NODE" --check server.mjs
@@ -37,7 +37,7 @@ fi
 rm -rf build; mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
 /usr/bin/swiftc -O -swift-version 5 -target arm64-apple-macos13 -framework Cocoa -framework WebKit app/main.swift app/node.swift app/bundlecode.swift -o "$STAGE/Contents/MacOS/ccboard"
 /bin/cp app/Info.plist "$STAGE/Contents/Info.plist"
-/bin/cp server.mjs ui.html projects.mjs suggest.mjs limits.mjs statusline-tap.mjs accounts.mjs route.mjs preview.mjs judge.mjs org.mjs autopilot.mjs remote.mjs qr.mjs "$STAGE/Contents/Resources/"
+/bin/cp server.mjs ui.html projects.mjs suggest.mjs limits.mjs statusline-tap.mjs accounts.mjs route.mjs preview.mjs judge.mjs org.mjs autopilot.mjs remote.mjs qr.mjs windows.mjs codex-rpc.mjs codex-stage.mjs workflows.mjs recap.mjs chief-model.mjs workflow-org.mjs validation-workspace.mjs project-chief.mjs "$STAGE/Contents/Resources/"
 [ -f app/AppIcon.icns ] && /bin/cp app/AppIcon.icns "$STAGE/Contents/Resources/AppIcon.icns"
 [ "$NAME" = "总控台" ] || /bin/sh app/public-info.sh "$STAGE" "$NAME"
 /usr/bin/codesign --force --sign - "$STAGE" >/dev/null 2>&1

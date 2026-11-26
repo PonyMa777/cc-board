@@ -26,6 +26,9 @@
         架构图有两种摆法（顶栏「层级 | 放射」，ccb_orgshape）：层级是上面这一张；放射（#org.map）是同一份 org、同一批方块，你和总管在圆心、每个项目一个扇区、窗口按上下级一圈圈往外，
         orgMapLayout()（纯函数）算每个方块在哪，orgMapPaint() / orgMapArrange() 摆上去，orgMapLines() 画线，画布能拖能缩放（orgV、orgMapApply / orgMapFit / orgMapZoom）。
         文件清单的 ± 用 openDiff 按需读取逐笔补丁；复用 #preview、来源卡片底栏。正文画布与字色均来自主题 token。
+        顶栏日间 / 夜间按钮切换整页配色，ccb_theme 保存选择；首次默认夜间，在首屏绘制前恢复。
+        去终端的启动结果在当前详情弹窗内显示，避免提示被模态层遮住；请求期间防重复点击。
+        流程决策面板区分有效授权与已失效请求，保存用户补充要求；恢复绑定当前阶段，授权绑定当前请求编号。
  [PROTOCOL]: Update this header on change, then check CLAUDE.md
 -->
 <html lang="zh-CN">
@@ -33,6 +36,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>总控台</title>
+<script>
+// Restore before first paint; the existing palette supplies both themes.
+(() => {
+  let theme = 'dark';
+  try { if (JSON.parse(localStorage.getItem('ccb_theme')) === 'light') theme = 'light'; } catch (_) {}
+  document.documentElement.style.colorScheme = theme;
+})();
+</script>
 <style>
 /* 设计约定（11/15 改版「墨线」，Khalil 在两个方向里选的。分层的语法和「靠描边不靠阴影」学自 raft-ui 设计系统（MIT），数值是总控台自己的）：
    - 底分三层：--bg 页面 < --surface 卡片 < --raised 菜单、弹窗。卡片、按钮、徽章、顶栏都用一圈细墨线（--ink，1px、2 成浓度）划边界，不靠阴影和灰底。
@@ -261,7 +272,7 @@ body.bystatus .sl em:not(:empty){display:block}
 .sl button:hover{background:var(--hover);color:var(--text)}
 /* 点开的窄条：整卡，卡头多一个「收成一条」。按钮多一个，带预计的牌子给按钮留的宽度（--chead-btns，见下面 .meta:has(.me)）跟着多 24 + 6 = 30 px：
    11/19 线上：点开的在跑卡照 96 px 留，四个图标排不下，⤢ 被挤到第二行，标题上面空一行（卡头 66 px，正常 36 px） */
-.chead .shrink{display:none} body.wall .card.opened .chead .shrink{display:grid} body.wall .card.opened .chead{--chead-btns:126px}
+.chead .shrink{display:none} body.wall .card.opened .chead .shrink{display:grid} body.wall .card.opened .chead{--chead-btns:156px}
 .pager #pos button.pg{width:auto;height:22px;padding:0 4px 0 10px;font-size:11px;color:var(--text-3);white-space:nowrap}
 .pager #pos button.pg:first-child{padding-left:0}
 .pager #pos button.pg::before{display:none}
@@ -307,7 +318,7 @@ body.flow .alert .meta::before{width:16px;height:16px;margin:0}
    96 px = 卡窄于 540 px 时去终端、归档、放大看三个 24 px 图标 + 四个 6 px 间隔；带预计的只有在跑的卡，没有「审完了」。
    墙上点开的窄条多一个「收成一条」，是 126 px：写在变量 --chead-btns 里，由显示「收成一条」的那条规则一起改（11/19）。
    一行放得下时和别的牌子一样高（min-height 22 / 封面 28），只有折行时才变高 */
-.chead{--chead-btns:96px}
+.chead{--chead-btns:126px}
 .meta:has(.me){flex:0 1 auto;min-width:0;max-width:calc(100% - var(--chead-btns));flex-wrap:wrap;height:auto;min-height:22px;padding-top:2px;padding-bottom:2px;row-gap:1px}
 body.flow .meta:has(.me){height:auto;min-height:28px;padding-top:2px;padding-bottom:2px}
 .meta .eg{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
@@ -639,6 +650,11 @@ body.org #org{display:block;position:relative;min-height:100%;padding:28px 0 64p
 .ot{flex:1;min-width:0;font-size:13px;line-height:20px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .s-handled .ot,.s-fyi .ot,.s-idle .ot{font-weight:500}
 .orole{flex:none;height:18px;padding:0 5px;border-radius:var(--r-badge);box-shadow:inset 0 0 0 var(--ink-w) var(--ink);font-size:11px;line-height:18px;font-weight:600;color:var(--text-2);white-space:nowrap}
+.orunning{display:inline-flex;flex:none;align-items:center;gap:4px;height:20px;padding:0 6px;border-radius:var(--r-badge);box-shadow:inset 0 0 0 var(--ink-w) var(--accent);color:var(--accent);font-size:11px;line-height:20px;font-weight:600;white-space:nowrap}
+.orunning[hidden]{display:none}
+.orunning svg{width:12px;height:12px;flex:none;animation:org-running-turn 1.2s linear infinite}
+@keyframes org-running-turn{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.orunning svg{animation:none}}
 .orole[hidden],.obr:empty,.o3:empty{display:none}
 .obr{flex:none;font-size:11.5px;color:var(--text-3);white-space:nowrap}
 .o2,.o3{padding-left:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -704,6 +720,70 @@ body.org main:has(#org.map){overflow:hidden}
 @media (max-width:700px){body.org #org{padding-top:18px} .orow{flex-direction:column;align-items:stretch;width:auto;min-width:0;gap:24px;padding-top:0} .ocol{width:auto} .obus{display:none}}
 @media (max-width:700px){.hint,.brand,.lim{display:none} .bar{gap:8px;padding-left:10px;padding-right:10px} .seg button{padding:0 8px} :root{--cw:calc(100vw - 28px)} .arow{flex-wrap:wrap}.arow .t{flex-basis:100%}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important} dialog,dialog[open]{transform:none} .card{transition-property:opacity,filter!important} .halo{transition-property:opacity!important}}
+.recap-section{padding:12px 0;border-bottom:1px solid var(--hair)}
+.recap-section h2{font-size:14px;margin:0 0 8px}
+.recap-quote{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0;color:var(--text-2)}
+.recap-source{font-size:12px;color:var(--text-3);margin:5px 0}
+.recap-message{padding:10px 0;border-bottom:1px solid var(--hair);scroll-margin:12px}
+.recap-message:target{box-shadow:inset 3px 0 0 var(--text-2);padding-left:10px}
+.oactions{display:flex;gap:8px;margin-top:8px}
+.oactions button{display:inline-flex;padding:5px 9px;border-radius:var(--r-ctl);box-shadow:inset 0 0 0 var(--ink-w) var(--ink);font-size:12px;white-space:nowrap}
+.oactions button:disabled{opacity:.6;cursor:wait}
+#org.map .oactions{display:none}
+#org.map .oli.hot1>.onode .oactions,#org.map .onode:hover .oactions,#org.map .onode:focus-within .oactions{display:flex}
+.task-launch{position:relative;display:flex;align-items:center;gap:4px}
+.task-modes{position:absolute;right:0;bottom:100%;min-width:260px;padding:6px;background:var(--raised);box-shadow:var(--shadow-pop);border-radius:var(--r-ctl);z-index:30}
+.task-modes button{display:block;width:100%;text-align:left;padding:10px;border-radius:var(--r-ctl)}
+.task-modes button[aria-checked="true"]{background:var(--hover);font-weight:600}
+.task-modes small{display:block;color:var(--text-2);font-weight:400;margin-top:4px}
+.workflow-entry{padding:12px 0;border-bottom:1px solid var(--hair)}
+.workflow-entry>button{text-align:left;width:100%;padding:5px 0}
+.workflow-report{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-2);font:inherit;margin:8px 0}
+#workflowBody textarea{width:100%;min-height:76px}
+.workflow-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.workflow-context,.workflow-hold{padding:12px;border-radius:var(--r-card);box-shadow:inset 0 0 0 var(--ink-w) var(--ink);margin:12px 0}
+.workflow-hold{box-shadow:inset 0 0 0 var(--ink-w) var(--attn)}
+.workflow-hold h3{font-size:18px;line-height:1.5;margin:4px 0 12px}
+.workflow-hold label{display:block;margin:18px 0 8px;font-weight:600}
+.workflow-hold button{margin:12px 8px 0 0;padding:9px 14px}
+.workflow-hold textarea{display:block;width:100%;min-height:90px;box-sizing:border-box;background:var(--field);color:var(--text);border:1px solid var(--hair);border-radius:6px;padding:10px;font:inherit;resize:vertical}
+.workflow-hold details{margin:12px 0;color:var(--text-2)}
+.workflow-tree,.workflow-tree ul{list-style:none;margin:8px 0;padding-left:18px;border-left:1px solid var(--hair)}
+.workflow-tree{padding-left:0;border-left:0}
+.workflow-tree li{min-width:0;margin:8px 0}
+.workflow-tree details{padding:9px 10px;border-radius:var(--r-ctl);box-shadow:inset 0 0 0 var(--ink-w) var(--ink)}
+.workflow-tree summary{cursor:pointer;overflow-wrap:anywhere;line-height:1.7}
+.workflow-model{display:inline-block;margin-left:7px;padding:0 5px;border-radius:var(--r-badge);box-shadow:inset 0 0 0 var(--ink-w) var(--ink);font-size:11px;color:var(--text-2);font-weight:400}
+.workflow-thread{font-size:11px;line-height:1.6;overflow-wrap:anywhere;color:var(--text-3);margin:5px 0}
+.workflow-evidence{margin:8px 0;padding:8px 10px;background:var(--field);border-radius:var(--r-ctl);overflow-wrap:anywhere}
+.workflow-evidence strong{font-size:12px}
+.workflow-execution{padding:10px;margin:10px 0;border-radius:var(--r-ctl);box-shadow:inset 0 0 0 var(--ink-w) var(--ink);scroll-margin:12px}
+.workflow-report-label{font-size:12px;font-weight:600;margin-top:12px}
+/* Host-driven radial workflow. Geometry is independent of state/text and polling. */
+#org.workflow-map .omw>.otop,#org.workflow-map .omnodes,#org.workflow-map .omlabs,#org.workflow-map .omlines{display:none}
+.wr-select{position:absolute;top:12px;left:14px;max-width:55%;z-index:5;background:var(--surface);color:var(--text);border:1px solid var(--ink);border-radius:var(--r-ctl);padding:6px}
+.wr-board{position:absolute;left:0;top:0}
+.wr-lines{position:absolute;left:-800px;top:-550px;width:1600px;height:1100px;overflow:visible;pointer-events:none}
+.wr-lines path{fill:none;stroke:var(--hair-3);stroke-width:1}
+.wr-you{position:absolute;left:-60px;top:-85px;width:120px;text-align:center;font-weight:700;color:var(--text)}
+.wr-slot{position:absolute;width:230px;height:112px;transform:translate(-50%,-50%)}
+.wr-node{padding:0;margin:0;list-style:none}
+#org.map .wr-node>.oli{padding:0;position:relative}
+#org.map .wr-node .onode,.wr-empty{box-sizing:border-box;width:230px;height:112px;padding:10px;border-radius:var(--r-card);background:var(--surface);box-shadow:inset 0 0 0 1px var(--ink);white-space:pre-line;overflow:hidden;font-size:13px}
+#org.map .wr-node .onode .o2{display:block;margin-top:8px}
+#org.map .wr-node .onode .ow{display:block;color:var(--text-2);font-size:12px}
+#org.map .wr-node .onode .os{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;font-size:13px;line-height:18px}
+#org.map .wr-node .onode .o3,#org.map .wr-node .onode .meta,#org.map .wr-node .onode .obr{display:none}
+#org.map .wr-node .onode .oactions{position:absolute;bottom:0;left:0;right:0;padding:4px;background:var(--raised)}
+.wr-slot[data-state="running"]{animation:wr-breathe 2.2s ease-in-out infinite}
+#org.map .wr-slot[data-state="waiting"] .onode,#org.map .wr-slot[data-state="waiting"] .wr-empty{box-shadow:inset 0 0 0 2px var(--attn);color:var(--attn)}
+#org.map .wr-slot[data-state="waiting"] .ow{color:var(--attn)}
+.wr-tasks{position:absolute;width:240px;height:132px;transform:translate(-50%,-50%);overflow:auto;padding:8px;background:var(--surface);border:1px solid var(--hair-3);border-radius:var(--r-card);font-size:12px;box-sizing:border-box}
+.wr-tasks button{display:block;width:100%;text-align:left;white-space:normal;overflow-wrap:anywhere;color:var(--text);padding:5px;border:0;border-bottom:1px solid var(--hair);background:transparent;font:inherit}
+.wr-tasks button:disabled{opacity:1;cursor:default}
+.wr-tasks b{color:var(--text-2)}
+@keyframes wr-breathe{0%,100%{filter:drop-shadow(0 0 1px var(--accent))}50%{filter:drop-shadow(0 0 8px var(--accent))}}
+@media(prefers-reduced-motion:reduce){.wr-slot[data-state="running"]{animation:none}}
 </style>
 </head>
 <body class="flow">
@@ -715,6 +795,8 @@ body.org main:has(#org.map){overflow:hidden}
   <span class="hint" id="hint" data-drag></span>
   <div class="lim" id="limits" role="group" aria-label="订阅额度"></div>
   <button class="tbtn" id="archBtn">归档</button>
+  <button class="tbtn" id="themeBtn" type="button" title="切换到日间模式" aria-label="切换到日间模式">☀ 日间</button>
+  <button class="tbtn" id="workflowBtn" hidden>任务流程</button><button class="tbtn" id="chiefBtn" hidden>项目 Chief</button>
   <div class="seg" id="by" aria-label="墙上怎么分列"><button data-by="project">按项目</button><button data-by="status">按状态</button></div>
   <div class="seg" id="oshape" aria-label="架构图怎么排"><button data-oshape="tree">层级</button><button data-oshape="map">放射</button></div>
   <div class="seg" id="rows" aria-label="一屏放多少"><button data-rows="2">8 格</button><button data-rows="3">12 格</button></div>
@@ -730,12 +812,15 @@ body.org main:has(#org.map){overflow:hidden}
 <div class="menu" id="menu" role="menu"></div>
 <div id="toast" role="status"><span></span><button hidden></button></div>
 
-<dialog id="detail"><div class="dhead"><h1 id="dTitle"></h1><button class="ib" data-close aria-label="关闭"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 3l8 8M11 3l-8 8"/></svg></button></div><div class="dbody" id="dBody"></div><div class="dock" id="dDock" hidden></div></dialog>
+<dialog id="detail"><div class="dhead"><h1 id="dTitle"></h1><button class="bordered" id="detailRecap">回顾进展</button><button class="ib" data-close aria-label="关闭"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 3l8 8M11 3l-8 8"/></svg></button></div><div class="dbody" id="dBody"></div><div class="dock" id="dDock" hidden></div></dialog>
+<dialog id="recapDlg" style="--w:800px"><div class="dhead"><h1 id="recapTitle">回顾进展</h1><button class="bordered" id="recapReload">更新回顾</button><button class="plain" data-close>关闭</button></div><div class="dbody" id="recapBody"></div></dialog>
+<dialog id="archiveBlocked" style="--w:620px" aria-labelledby="archiveBlockedTitle"><div class="dhead"><h1 id="archiveBlockedTitle">暂未归档：Codex 仍持有会话</h1><button class="plain" data-close>关闭</button></div><div class="dbody"><p id="archiveBlockedChat"></p><p>已交付的聊天也可能仍被 Codex 桌面或 CLI 服务加载，这不等于任务正在运行。当前 CCBoard 使用独立服务，不能释放其他服务持有的会话。</p><p>可以在 Codex 桌面内归档这条聊天；若要继续从这里归档，请先等其他任务结束，再正常退出持有会话的 Codex 应用或 CLI，然后回到 CCBoard 重试。仅切换聊天不保证释放。</p><p>这里不会停止任务、强制退出 Codex 或自动跳转。聊天仍保留在看板中。</p><button class="bordered" data-close>知道了</button></div></dialog>
 <dialog id="preview"><div class="dhead"><h1 id="pTitle"></h1><span class="pdir" id="pDir"></span><button class="tbtn" id="pSync" hidden title="所有视频从头一起播；鼠标停在哪一格，就听哪一格的声音">同时播放</button><button class="ib" id="pReload" aria-label="重新载入" title="重新载入"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 7a4.5 4.5 0 1 1-1.3-3.2"/><path d="M11.5 2v2.6H8.9"/></svg></button><button class="tbtn" id="pOpen" title="在默认浏览器里打开（也可以 ⌘ 点链接）">在浏览器打开</button><button class="ib" data-close aria-label="关闭"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 3l8 8M11 3l-8 8"/></svg></button></div><div class="pbody" id="pBody"><iframe id="pFrame" title="预览" referrerpolicy="no-referrer"></iframe><img id="pImg" alt="" hidden><video id="pVid" controls playsinline preload="metadata" hidden></video><audio id="pAud" controls preload="metadata" hidden></audio><div id="pText" class="md" hidden></div><div id="pGal" hidden></div><div class="pwait" id="pWait">读取中…</div></div><div class="dock" id="pDock" hidden><div class="dto"><span>回给</span><b></b></div></div></dialog>
 
 <dialog id="newDlg" style="--w:580px"><div class="dhead"><h1 id="nTitle">新任务</h1></div>
   <div class="dbody">
     <div class="field"><label for="nPrompt">要它做什么</label><textarea id="nPrompt" placeholder="直接写任务，它在后台做，做完会站到最前面。放在哪个文件夹它自己定。留空 = 开一个空会话，等你在卡片里说第一句。"></textarea><div class="atts" id="nAtts"></div></div>
+    <div class="field"><label for="nCwd">工作目录（~ 使用默认目录）</label><input id="nCwd" value="~" autocomplete="off"></div>
     <div class="frow">
       <div class="field" id="nProvField"><span class="lab">交给谁</span><div class="seg" id="nProv" style="height:34px;align-items:stretch"></div></div>
       <div class="field grow"><label for="nModel">模型</label><select id="nModel"></select></div>
@@ -744,8 +829,12 @@ body.org main:has(#org.map){overflow:hidden}
     </div>
     <div class="field cmf" id="nCmField"><button type="button" class="sw" id="nCm" role="switch" aria-checked="false" aria-describedby="nCmNote"><span class="swt" aria-hidden="true"></span><span class="swl">Code Mode（实验）</span></button><p class="cmn" id="nCmNote">Claude 写脚本一次跑多个工具，适合大范围搜索、同一种改动改很多文件；这个窗口不能用 Remote Control。</p></div>
   </div>
-  <div class="dfoot"><button class="plain" id="nClip" title="加图片或文件，也可以直接粘贴或拖进来">加附件</button><span class="grow" id="nMsg">⌘ 回车开工</span><button class="plain" data-close>取消</button><button class="primary" id="nGo">开工</button></div>
+  <div class="dfoot"><button class="plain" id="nClip" title="加图片或文件，也可以直接粘贴或拖进来">加附件</button><span class="grow" id="nMsg">⌘ 回车开工</span><button class="plain" data-close>取消</button><div class="task-launch" id="nLaunch"><div class="task-modes" id="nModes" role="menu" aria-label="任务模式" hidden><button type="button" role="menuitemradio" data-task-mode="once" aria-checked="true">一次性任务<small>由实际操作助手完成一轮</small></button><button type="button" role="menuitemradio" data-task-mode="complex" aria-checked="false">复杂任务<small>负责人按需分工，再独立验收</small></button><button type="button" role="menuitemradio" data-task-mode="discuss" aria-checked="false">先讨论方案<small>先澄清与比较，确认后再执行</small></button></div><button class="primary" id="nGo" aria-describedby="nModeLabel">开工 →</button><button class="plain" id="nModeToggle" aria-label="任务模式" aria-haspopup="menu" aria-controls="nModes" aria-expanded="false">▾</button></div></div>
+  <div class="dfoot" id="nModeLabel" role="status">一次性任务</div>
 </dialog>
+
+<dialog id="workflowDlg" style="--w:760px"><div class="dhead"><h1>任务流程</h1><button class="plain" data-close>关闭</button></div><div class="dbody" id="workflowBody"></div></dialog>
+<dialog id="chiefDlg" style="--w:800px"><div class="dhead"><h1>项目 Chief</h1><button class="plain" data-close>关闭</button></div><div class="dbody"><div class="field"><label for="chiefTeam">项目团队</label><select id="chiefTeam"></select></div><p id="chiefScope"></p><p>先讨论目标，发送“开始干”后真正派工。用“记住：…”保存项目偏好。</p><div id="chiefHistory" aria-live="polite"></div><div class="field"><textarea id="chiefInput" rows="4" aria-label="给项目 Chief 的消息"></textarea></div><p id="chiefMessage" role="status"></p><button class="bordered" id="chiefSend">发送给 Chief</button></div></dialog>
 
 <dialog id="archDlg" style="--w:640px"><div class="dhead"><h1>归档</h1><button class="ib" data-close aria-label="关闭"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 3l8 8M11 3l-8 8"/></svg></button></div>
   <div class="dbody" id="aBody"></div>
@@ -783,6 +872,65 @@ const calm = matchMedia('(prefers-reduced-motion: reduce)');
 const LANG = (() => { const q = new URLSearchParams(location.search).get('lang'); if (q === 'en' || q === 'zh') return q; const k = store('ccb_lang'); if (k === 'en' || k === 'zh') return k; return (navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'; })();
 /* i18n:start */
 const EN = {
+  '正在打开终端…': 'Opening terminal…', '已请求打开独立终端窗口，请在该窗口继续。': 'Requested a separate terminal window. Continue there.', '无法打开终端窗口': 'Unable to open terminal window',
+  '日间': 'Day', '夜间': 'Night', '切换到日间模式': 'Switch to day mode', '切换到夜间模式': 'Switch to night mode',
+  '等待授权': 'Waiting for approval', '查看授权': 'Review approval', '允许这一次': 'Allow once', '拒绝执行': 'Decline execution',
+  '以下命令申请额外执行权限；允许仅适用于这一次请求，不修改长期权限。': 'This command requests additional execution permissions. Approval applies only to this request and does not change permanent permissions.',
+  '项目 Chief': 'Project Chief', '项目团队': 'Project team', '给项目 Chief 的消息': 'Message to Project Chief', '发送给 Chief': 'Send to Chief',
+  '先讨论目标，发送“开始干”后真正派工。用“记住：…”保存项目偏好。': 'Discuss the goal, then send “开始干” to dispatch real work. Use “记住：…” to save a project preference.',
+  '尚未绑定项目团队。': 'No project team is configured.', 'Chief 正在处理…': 'Chief is processing…', '查看任务流程': 'View workflow', '项目 Chief 尚未就绪。': 'Project Chief is not ready.',
+  '存档': 'Archive', '存档中…': 'Archiving…',
+  '暂未归档：Codex 仍持有会话': 'Not archived: Codex still owns this chat',
+  '已交付的聊天也可能仍被 Codex 桌面或 CLI 服务加载，这不等于任务正在运行。当前 CCBoard 使用独立服务，不能释放其他服务持有的会话。': 'A completed chat can remain loaded in Codex desktop or a CLI server. This does not mean a task is running. CCBoard uses a separate server and cannot release a chat held by another server.',
+  '可以在 Codex 桌面内归档这条聊天；若要继续从这里归档，请先等其他任务结束，再正常退出持有会话的 Codex 应用或 CLI，然后回到 CCBoard 重试。仅切换聊天不保证释放。': 'You can archive this chat in Codex desktop. To retry here, first wait for other tasks to finish, then quit the Codex application or CLI holding the chat normally and retry in CCBoard. Switching chats alone may not release it.',
+  '这里不会停止任务、强制退出 Codex 或自动跳转。聊天仍保留在看板中。': 'No tasks will be stopped, Codex will not be forced to quit, and this page will not navigate away. The chat remains on the board.',
+  '知道了': 'Got it',
+  '刷新并继续': 'Refresh and continue', '正在恢复…': 'Resuming…', '已请求继续任务': 'Task continuation requested', '任务当前不能继续，请刷新状态后再试。': 'This task cannot continue now. Refresh its status and try again.',
+  '回顾进展': 'Review progress', '更新回顾': 'Refresh recap', '正在回溯对话…': 'Reviewing conversation history…', '时间未记录': 'Time not recorded',
+  '源记录暂时不可读，当前回顾只是上次读取的快照。': 'The source log is currently unavailable; this recap is an earlier snapshot.', '暂时无法检查新内容，当前回顾可能过期。': 'Could not check for new content; this recap may be stale.',
+  '助手最近的消息（未确认交付）': 'Latest assistant message (delivery not confirmed)', '最新用户消息之后尚未读到助手回复，上面是此前的回复。': 'No assistant reply was found after the latest user message; the reply above is earlier.',
+  '最近几轮的上下文': 'Context from recent exchanges', '继承的父聊天上下文': 'Inherited parent-chat context', '此条正文未完整显示': 'This message is not shown in full',
+  '回顾读取失败，请重试；这不代表没有历史。': 'Could not read the recap. Retry; this does not mean there is no history.',
+  '无法读取对话；这不代表没有历史。': 'Unable to read this conversation; this does not mean there is no history.', '查看原文': 'View source',
+  '可读记录不足，无法可靠判断。': 'There is not enough readable history to determine this reliably.', '这是部分可读记录，存在未显示或未读取的内容。': 'This is partial history; some content was not read or displayed.',
+  '部分日志行损坏，已保留可读内容。': 'Some log entries are malformed; readable content is retained.', '记录仍在写入或读取时发生变化，请稍后更新。': 'The log is being written or changed during reading. Refresh later.',
+  '按原文摘录整理，未调用模型；助手报告不等于已独立验证。阅读不会继续任务或改变处理状态。': 'Source excerpts, without model generation. Assistant reports are not independently verified. Reading does not resume work or change its status.',
+  '对话有新内容，这份回顾可能过期；点击“更新回顾”。': 'The conversation changed; this recap may be stale. Select Refresh recap.',
+  '最初想做什么': 'Original goal', '关键背景与后续请求': 'Key context and follow-up requests', '没有更多可提取的背景，请查看原文。': 'No additional context could be extracted. Check the source.',
+  '已有回复与进展（助手曾报告）': 'Replies and progress reported by the assistant', '以下是助手的交付摘录，不把计划或建议当作已完成操作。': 'Assistant excerpts below; plans and recommendations are not completed actions.',
+  '目前讨论到哪一步': 'Where the discussion stands', '你最近问的是': 'Your latest question', '助手最近的结论或建议': 'Latest assistant conclusion or recommendation',
+  '为什么显示待跟进／需要确认什么': 'Why it is marked for follow-up / what needs clarification', '看板自动标记的句子（可能误判）：': 'Automatically flagged sentence (may be incorrect):',
+  '这句的原文上下文': 'Original context of this sentence', '反问、小标题也可能触发自动标记；请结合上下文判断是否真的需要回答。': 'Rhetorical questions and headings can trigger this label. Check the context to see whether a response is actually needed.',
+  '日志没有提供可可靠确认的待回答项；请结合最近交流判断。': 'No pending question can be reliably established from the log. Review the recent exchange.',
+  '展开原始对话（按记录顺序）': 'Expand original conversation (record order)', '显示更多原文': 'Show more source messages', '助手': 'Assistant',
+  '任务流程': 'Task workflows', '任务模式': 'Task mode', '一次性任务': 'One-time task', '复杂任务': 'Complex task', '先讨论方案': 'Discuss a plan first',
+  '由实际操作助手完成一轮': 'One turn by an operator', '负责人按需分工，再独立验收': 'Lead delegates as needed, then independent acceptance', '先澄清与比较，确认后再执行': 'Clarify and compare first; execute only after confirmation',
+  'YOU（你）': 'YOU', 'YOU（你／当前对话）': 'YOU / this conversation', '本任务的目标入口；外部桌面对话未绑定、未接管。': 'The goal entry point for this task. External desktop chats are not bound or controlled.',
+  '真实线程关系': 'Actual thread relationships', '仅展示本任务已记录的助手线程，不把其他聊天归入本任务。': 'Only recorded assistant threads for this task are shown; other chats are not included.',
+  '总负责人': 'Task lead', '任务拆解': 'Decomposition', '研究': 'Research', '代码实现': 'Coding', '文档整理': 'Documentation', '独立验收': 'Independent QA', '受阻': 'Blocked',
+  '独立测试执行': 'Independent test execution', '宿主记录的测试执行': 'Host-recorded test execution', '隔离环境实际执行': 'Executed in an isolated environment', '命令': 'Command', '退出码': 'Exit code', '输出': 'Output', '执行目录': 'Execution directory', '快照校验值': 'Snapshot hash', '未记录退出码': 'Exit code not recorded', '未记录命令': 'Command not recorded', '无输出': 'No output',
+  '测试脚本证据': 'Test script evidence', '测试脚本': 'Test script', '未完整核验': 'Verification incomplete', '未记录': 'Not recorded', '未提供脚本内容': 'Script content unavailable', '测试脚本证据不完整，尚未完整核验；不能据此认定测试通过。': 'Test script evidence is incomplete and has not been fully verified; it cannot establish that tests passed.',
+  '查看引用的测试记录': 'View referenced test record', '未找到对应的宿主测试记录': 'The referenced host test record was not found', '独立测试在隔离副本实际执行；QA 核查证据，不等于已验证真实桌面操作。': 'Independent tests execute in an isolated copy. QA checks evidence; this does not establish that real desktop operations were verified.',
+  '职责': 'Role', '继续委派': 'Delegate next stage', '提交最终结果': 'Submit final result', '通过': 'Passed', '需要返工': 'Changes requested',
+  '负责人模型选择': 'Lead model selection', '实际模型': 'Actual model', '未报告实际模型': 'Actual model not reported', '选择理由': 'Selection reason', '强度': 'Effort',
+  '阶段上限': 'Stage limit', '返工次数': 'Rework count', '写入版本': 'Write revision', '最近验收版本': 'Latest QA revision', '尚未创建真实线程': 'Actual thread not created yet', '父线程尚未核验': 'Parent thread not verified',
+  '实际委派父线程': 'Actual delegating thread', '任务内独立线程': 'Independent thread in this task', '线程': 'Thread', '回合': 'Turn', '委派任务': 'Delegated task',
+  '摘要': 'Summary', '证据': 'Evidence', '阻塞事项': 'Blockers', '检查发现': 'Findings', '限制': 'Limitations', '待澄清问题': 'Questions', '计划步骤': 'Steps', '风险': 'Risks', '决策': 'Decision', '结果': 'Outcome', '验收结论': 'Verdict',
+  '真实环境（助手报告）': 'Real environment (assistant report)', '隔离环境（助手报告）': 'Isolated environment (assistant report)', '静态检查（助手报告）': 'Static inspection (assistant report)', '未分类证据': 'Unclassified evidence',
+  '证据分类来自该助手的报告；请结合具体记录判断，不能仅凭分类认定已验证。': 'Evidence categories come from the assistant report; assess the concrete records rather than treating a category as proof.',
+  '目录占用尚未解除': 'Workspace lock remains held', '写入助手是否停止尚未确认；当前目录保持占用，不会自动重放任务。': 'The writer has not been confirmed stopped. The workspace remains locked and the task will not be replayed automatically.',
+  '我已核对停止，解除目录占用': 'I verified it stopped; release the workspace lock', '确认写入助手已停止？': 'Confirm the writer has stopped?', '请先在对应聊天核对所有写入助手确已停止。确认只解除目录占用，不会继续或重放任务。': 'First verify in the corresponding chats that every writer has stopped. Confirming only releases the workspace lock; it does not continue or replay the task.', '确认已停止并解除占用': 'Confirm stopped and release lock',
+  '开工 →': 'Go →', '工作目录（~ 使用默认目录）': 'Working directory (~ uses the default)', '请先填写任务内容': 'Enter a task first',
+  'Codex 任务流程尚未就绪。': 'Codex workflows are not ready.', '任务流程不可用。': 'Workflows are unavailable.', '排队中': 'Queued', '需要你处理': 'Needs your input',
+  '检查未通过': 'Review did not pass', '等待方案确认': 'Awaiting plan confirmation', '失败': 'Failed', '已中断': 'Interrupted', '已取消后续调度': 'Further stages cancelled',
+  '实际操作': 'Operate', '独立检查': 'Independent review', '汇总': 'Summary', '讨论方案': 'Discuss plan', '还没有任务流程。': 'No workflows yet.', '返回任务列表': 'Back to tasks',
+  '负责人、拆解、讨论与 QA 只读核查；研究可检索公开网页；代码和文档助手按授权执行。': 'Lead, decomposition, planning and QA perform read-only checks. Research may search public webpages; coding and documentation assistants perform authorized work.',
+  '本任务总负责人，目标来自 YOU（你）；未接管外部聊天。': 'Lead for this task, with the goal supplied by YOU; no external chats are controlled.',
+  '当前结果': 'Current result', '正在创建助手': 'Creating assistant', '继续补充需求（不会开始执行）': 'Add requirements (does not start execution)',
+  '继续讨论': 'Continue discussion', '按一次性任务执行': 'Execute as one-time task', '按复杂任务执行': 'Execute as complex task', '请求停止任务': 'Request stop',
+  '请先发送补充内容，等方案更新后再确认执行。': 'Send your additions first, then confirm the updated plan.',
+  '归档到 Codex，保留对话记录': 'Archive in Codex and keep the conversation',
+  '已在 Codex 中归档，可在 Codex 的已归档聊天中恢复。': 'Archived in Codex. Restore it from archived chats in Codex.',
   '看改动': 'Show changes',
   '看这一轮的改动': 'Show changes this turn',
   '这一轮的改动': 'Changes this turn',
@@ -867,6 +1015,7 @@ const EN = {
   'Code Mode（实验）': 'Code Mode (experimental)', 'Claude 写脚本一次跑多个工具，适合大范围搜索、同一种改动改很多文件；这个窗口不能用 Remote Control。': 'Claude writes a script that runs several tools in one go. Suits wide searches and the same change across many files. This window can’t use Remote Control.',
   '这个窗口开着 Code Mode（实验）：Claude 写脚本一次跑多个工具，不能用 Remote Control': 'This window runs Code Mode (experimental): Claude writes a script that runs several tools in one go; no Remote Control',
   // 架构视图（11/16 khalil-a0）
+  '工作流放射图': 'Workflow radial view', '全部会话': 'All sessions', '排队中': 'Queued', '需要你决定': 'Needs your decision', '正在拆分任务': 'Breaking down the task', '未分配': 'Unassigned', '已停止': 'Stopped',
   '架构': 'Org', '架构图怎么排': 'Org chart layout', '层级': 'Tree', '放射': 'Radial', '画布': 'Canvas', '画布缩小': 'Zoom out', '画布放大': 'Zoom in', '适应窗口': 'Fit', '把整张图放回窗口里（双击空白处也行）': 'Fit the whole chart in the window (or double-click empty space)',
   '谁归谁管：总管、各项目的负责人和它们带的窗口': 'Who reports to whom: the chief, each project lead and the windows they run',
   '总管': 'Chief', '负责人': 'Lead', '前任': 'Former', '后台在跑': 'Background task', '你派的': 'from you', '没有事等你': 'nothing needs you', '刚刚': 'just now',
@@ -938,7 +1087,22 @@ function T(s) {
   if (k.length <= 90) for (const [re, to] of RULES) if (re.test(k)) return s.replace(k, k.replace(re, to));
   return s;
 }
-// 服务给的归档原因可能是「，」连着的几段（「无需处理的交付，25 小时没人理它，改过 1 次文件」）：中文原样；英文一段一段过 T()
+// Theme preference applies to every view without reloading or changing task state.
+function updateThemeButton() {
+  const dark = document.documentElement.style.colorScheme === 'dark';
+  const button = $('#themeBtn');
+  button.textContent = (dark ? '☀ ' : '☾ ') + T(dark ? '日间' : '夜间');
+  button.title = T(dark ? '切换到日间模式' : '切换到夜间模式');
+  button.setAttribute('aria-label', button.title);
+}
+$('#themeBtn').onclick = () => {
+  const theme = document.documentElement.style.colorScheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.style.colorScheme = theme;
+  store('ccb_theme', theme);
+  updateThemeButton();
+};
+updateThemeButton();
+// 服务给的归档原因可能是「，」连着的几段：中文原样；英文一段一段过 T()
 function trWhy(w) {
   if (LANG !== 'en') return String(w || '');
   const parts = String(w || '').split('，'), out = [];
@@ -1164,7 +1328,7 @@ function view(s) {
   const a = justSent ? null : s.alert;       // 服务端判的：这一轮为什么停了（额度用完 / 登录过期 / 报错 / 被打断 / 没做完 / 很久没动静）
   if (s.ask || s.status === 'waiting') { k = 'ask'; label = '等你选'; }
   else if (s.status === 'busy' || justSent) { k = 'busy'; label = '运行中'; }
-  else if (a) { k = 'stopped'; label = '停住了'; }
+  else if (a) { k = 'stopped'; label = a.key?.startsWith('approval@') ? '等待授权' : '停住了'; }
   // 它自己歇着、放到后台的活还在跑（状态 shell），或它自己写了【在跑】：都算在跑，退到后面。它说的【在跑】半小时没下文，就当交付了，重新等你审
   else if (s.status === 'shell' || (s.done && s.result && d.need === 'bg' && Date.now() - ms(s.resultAt) < 30 * 60e3)) { k = 'busy'; label = '后台在跑'; bg = true; }
   else if (s.done && s.result) {             // 回给别的窗口的、写明不用你管的：无需处理（灰字、不计数）
@@ -1187,7 +1351,7 @@ const firstSentence = (src) => {
 function coverOf(s, v) {
   const d = s.digest || {};
   if (v.k === 'ask') { const q = s.ask && s.ask.questions[0] ? s.ask.questions[0].q : s.dialog ? s.dialog.question : ''; return { head: q ? firstSentence(q) : T('它停下来等你选'), ask: '' }; }
-  if (v.alert || v.k === 'stopped') return { head: T(WHY_LONG[v.why] || ''), ask: '' };
+  if (v.alert || v.k === 'stopped') return { head: s.alert?.workflow ? firstSentence(s.alert.summary || s.alert.text) : T(WHY_LONG[v.why] || ''), ask: '' };
   if (v.k === 'busy' && !v.bg) return { head: s.note ? firstSentence(s.note) : T('开工了，还没有阶段性说明。'), ask: '' };
   return { head: d.head || firstSentence(s.result), ask: v.need === 'reply' ? d.ask || '' : '' };
 }
@@ -1210,6 +1374,10 @@ function dialogHTML(d) {
 }
 function bodyHTML(s, v) {
   let h = '';
+  const decisionNode = last?.org?.nodes?.[s.sid];
+  if (decisionNode?.workflowId && (v.k === 'stopped' || decisionNode.workflowApproval)) {
+    return '<section class="workflow-hold"><h3>需要你决定下一步</h3><p>' + esc(s.alert?.text?.split('\n')[0] || '任务需要你处理，尚未继续。') + '</p><p>查看具体问题、可选操作，或输入你的处理要求。</p><button class="primary" data-act="decision">查看问题并处理</button></section><details><summary>原始错误与技术详情</summary><pre class="screen">' + esc(s.alert?.text || '') + '</pre></details>';
+  }
   if (v.k === 'ask') {
     h = '<div class="lbl">它停下来等你选</div>' + (s.ask ? s.ask.questions.map((q) => '<p style="margin:0 0 4px;font-weight:600">' + esc(q.q) + '</p>' +
       (q.options.length ? '<ul style="margin:0 0 8px;padding-left:20px">' + q.options.map((o) => '<li>' + esc(o) + '</li>').join('') + '</ul>' : '')).join('')
@@ -1340,6 +1508,7 @@ function makeCard(sid) {
   const el = document.createElement('article'); el.className = 'card'; el.dataset.sid = sid;
   el.innerHTML = L('<div class="chead"><span class="meta num"></span><span class="tag" hidden></span><span class="proj"></span><span class="grow"></span><span class="mdl" hidden></span>' +
     '<button class="done" data-act="done" hidden title="只有点这里、或回它一句，才算处理过"></button>' +
+    '<button class="go" data-act="recap" aria-label="回顾进展" title="回顾进展">↶<span>回顾进展</span></button>' +
     '<button class="go" data-act="focus" aria-label="去终端" title="去终端">' + ICON.term + '<span>去终端</span></button>' +
     '<button class="go" data-act="archive" aria-label="归档" title="归档：没留下东西的删掉，其余留着、能接回来">' + ICON.archive + '<span>归档</span></button>' +
     '<button class="ib shrink" data-act="shrink" aria-label="收成一条" title="收成一条">' + ICON.shrink + '</button>' +
@@ -1381,6 +1550,8 @@ function makeCard(sid) {
     const apb = e.target.closest('[data-ap]'); if (apb) { autoOp(sid, apb.dataset.ap); return; }
     const chip = e.target.closest('[data-sg]'); if (chip) { pickChip(sid, +chip.dataset.sg); return; }
     if (ans && s.dialog && s.tmux) { const i = +ans.dataset.ans; api('/api/answer', { name: s.tmux, option: i, text: s.dialog.options[i] }).then((r) => { if (!r.ok) flash(sid, 'err', r.error); refresh(); }); return; }
+    if (act && act.dataset.act === 'recap') { openRecap(s.sid, s.title); return; }
+    if (act && act.dataset.act === 'decision') { openWorkflows(last?.org?.nodes?.[s.sid]?.workflowId); return; }
     if (act && act.dataset.act === 'focus') { goTerminal(s); return; }
     if (act && act.dataset.act === 'ack') { doAck(s); return; }
     if (act && act.dataset.act === 'menu') { openMenu(act, s); return; }
@@ -1407,7 +1578,22 @@ function pickChip(sid, n) {                   // 第 1 条：终端里按 1 和�
 function autoOp(sid, op) { api('/api/auto', { sid, op }).then((r) => { if (!r.ok) toast(r.error); refresh(); }).catch(() => {}); }
 const AUTO_MARK = '【总控台自动续跑】';     // 和 autopilot.mjs 的 AUTO_MARK 同一串：自动发出去的话以它开头，「你」那一行改写成「自动续跑」
 const autoBody = (t) => { const x = String(t || '').trim(); return x.startsWith(AUTO_MARK) ? x.slice(AUTO_MARK.length).trim() : x; };   // 去掉记号，剩下真发的那句（11/17 起是固定的一句；之前的是「按你上一轮留下的建议……：灰字」）
-function goTerminal(s) { api('/api/focus', { sid: s.sid }).then((r) => { if (!r.ok) toast(r.error); }); }
+async function goTerminal(s) {
+  if (s._openingTerminal) return;
+  s._openingTerminal = true;
+  const dialog = [...document.querySelectorAll('dialog[open]')].at(-1);
+  let feedback = dialog?.querySelector('[data-terminal-feedback]');
+  if (dialog && !feedback) {
+    feedback = document.createElement('p'); feedback.dataset.terminalFeedback = '';
+    feedback.setAttribute('role', 'status'); feedback.style.cssText = 'padding:10px 16px;color:var(--text);background:var(--field);white-space:pre-wrap';
+    dialog.prepend(feedback);
+  }
+  const report = text => { if (feedback) feedback.textContent = T(text); else toast(text, { ms: 7000 }); };
+  report('正在打开终端…');
+  try { const r = await api('/api/focus', { sid: s.sid }); report(r.ok ? '已请求打开独立终端窗口，请在该窗口继续。' : (r.error || '无法打开终端窗口')); }
+  catch (_) { report('总控台服务没应答'); }
+  finally { s._openingTerminal = false; }
+}
 // 自动收工只认你明确点过「审完了」的：告诉服务哪些会话的哪一次交付你处理过（map 新增 / 更新，clear 撤销）。服务只存内存，所以页面每次载入把 ccb_done 全发一遍（只增不删，几个页面同时开着也不会互相清掉）。失败不要紧，服务回头靠安静时长兜底
 function syncDone(map, clear) { api('/api/processed', { map: map || {}, clear: clear || [] }).catch(() => {}); }
 function markDone(s) {                          // 你点「审完了 / 先放着」才算处理过；可以撤销
@@ -1824,6 +2010,7 @@ const cardTitle = (c) => (c.s ? c.s.title : c.x ? c.x.title : c.p ? T('新任务
 
 let prevHot = new Set(), badgeN = -1;                   // 上一次画的时候「停住了要你跟进」的那些，用来发现新停住的
 function paint(st) {
+  if (st) paintWorkflowStatus(st.workflows);
   if (!st) return; last = st; HOME = st.home || HOME;
   srvDone = st.processed && typeof st.processed === 'object' ? st.processed : {};      // 老服务没有这个字段：只看本机的 ccb_done，和以前一样
   for (const k of Object.keys(undone)) if (Date.now() - undone[k].t > 15000) delete undone[k];   // 15 秒：clear 早该到了；还在说明服务那边没清掉，照服务的算
@@ -1838,6 +2025,7 @@ function paint(st) {
     if (sentAt[s.sid] && (s.status === 'busy' || ms(s.promptAt) >= sentAt[s.sid] - 3000)) { if (s.status !== 'busy' && s.done && ms(s.resultAt) > sentAt[s.sid]) delete sentAt[s.sid]; }
     if (opened.has(s.sid) && opened.get(s.sid) !== (s.resultAt || '')) opened.delete(s.sid);
     c.s = s; const v = view(s), wasLive = !!(c.v && c.v.live); c.v = v; workGrace(c, wasLive, paintNow); if (v.live) nBusy++; if (v.need === 'reply') nReply++; if (v.need === 'review') nReview++; if (v.k === 'ask') nAsk++;
+    $('[data-act="archive"]', c.el).title = T(s.nativeArchive ? '归档到 Codex，保留对话记录' : '归档：没留下东西的删掉，其余留着、能接回来');
     if (v.alert) { nStop++; hot.set(s.sid + '|' + s.alert.key, { title: s.title, why: v.why }); }
     const el = c.el, strip = stripOf(s.sid, c), opn = mode === 'wall' && quietCard(c) && opened.has(s.sid);
     const cls = 'card s-' + v.k + (v.need ? ' s-' + v.need : v.quiet ? ' s-' + v.quiet : '') + (v.alert ? ' alert' : '') + (v.bg ? ' bg' : '') + (el.classList.contains('side') ? ' side' : '') + (strip ? ' strip' : '') + (opn ? ' opened' : '') + (strip && el.classList.contains('s1') ? ' s1' : ''); if (el.className !== cls) el.className = cls;
@@ -2157,12 +2345,22 @@ function confirmSheet({ title, text, ok, danger }) {
 }
 
 // ── 归档 / 删除 / 恢复 ──
+function showArchiveWriterConflict(s) {
+  $('#archiveBlockedChat').textContent = s.title || s.sid;
+  if (!$('#archiveBlocked').open) $('#archiveBlocked').showModal();
+}
+const archivePending = new Set();
 async function doArchive(s, force) {
+  if (archivePending.has(s.sid)) return;
+  archivePending.add(s.sid);
+  try {
   let r; try { r = await api('/api/archive', { sid: s.sid, force }); } catch (e) { return toast('总控台服务没应答'); }
-  if (r.needConfirm) { if (await confirmSheet({ title: '归档「' + cut(s.title, 22) + '」？', text: '它还在做事，归档会打断它。对话会保留，以后可以从「归档」里恢复。', ok: '打断并归档' })) doArchive(s, true); return; }
-  if (!r.ok) return toast(r.error || '没归档成');
+  if (r.needConfirm) { if (await confirmSheet({ title: '归档「' + cut(s.title, 22) + '」？', text: '它还在做事，归档会打断它。对话会保留，以后可以从「归档」里恢复。', ok: '打断并归档' })) { archivePending.delete(s.sid); return await doArchive(s, true); } return; }
+  if (!r.ok) { refresh(); if (r.code === 'CODEX_WRITER_OWNED') return showArchiveWriterConflict(s); return toast(r.error || '没归档成'); }
+  if (r.nativeArchive) { toast(T('已在 Codex 中归档，可在 Codex 的已归档聊天中恢复。')); refresh(); return; }
   toast(r.keep === false ? '删了「' + cut(s.title, 16) + '」：' + r.why + '（对话在暂存处放 30 天）' : '已归档「' + cut(s.title, 16) + '」：' + (r.why || '') + '，能接回来', { action: '撤销', ms: Math.max(2000, (r.grace || 8000) - 600), onAction: () => api('/api/unarchive', { sid: s.sid }).then((x) => { if (!x.ok) toast(x.error); refresh(); }) });
   refresh();
+  } finally { archivePending.delete(s.sid); }
 }
 async function doDelete(sid, title) {
   if (!await confirmSheet({ title: '删除「' + cut(title, 22) + '」？', text: '会停掉这个会话，并把它从总控台移除。对话记录保留 30 天，之后清掉。', ok: '删除', danger: true })) return;
@@ -2285,6 +2483,94 @@ async function openDetail(sid, title, quiet) {
   b.scrollTop = Math.max(0, start.getBoundingClientRect().top - b.getBoundingClientRect().top + b.scrollTop - 10);   // 它在滚动内容里的位置，上面留 10px 呼吸；超过能滚的最大值时浏览器自己夹住
 }
 
+// Read-only, source-backed recap. Never calls send/ack/processed or restores a chat.
+let recapSid = null, recapRequest = 0, recapData = null, recapCheckTimer = null;
+const recapFlights = new Map();
+const recapFetch = sid => {
+  if (!recapFlights.has(sid)) recapFlights.set(sid, api('/api/recap?sid=' + encodeURIComponent(sid)).finally(() => recapFlights.delete(sid)));
+  return recapFlights.get(sid);
+};
+const recapPlain = text => String(text || '').replace(/\*\*/g, '').replace(/^#{1,6}\s+/gm, '');
+const recapClip = (text, n = 340) => { const value = recapPlain(text); return value.length <= n ? value : value.slice(0, Math.floor(n * .65)) + '\n…\n' + value.slice(-Math.floor(n * .35)); };
+const recapTime = at => { const d = new Date(at); return at && Number.isFinite(d.getTime()) ? d.toLocaleString(LANG === 'zh' ? 'zh-CN' : 'en-US') : T('时间未记录'); };
+async function openRecap(sid, title = '') {
+  if (!sid) return;
+  if (recapSid === sid && $('#recapDlg').open && recapFlights.has(sid)) return;
+  const request = ++recapRequest; recapSid = sid; recapData = null; clearTimeout(recapCheckTimer);
+  $('#recapTitle').textContent = T('回顾进展') + (title ? ' · ' + title : '');
+  $('#recapBody').innerHTML = '<p role="status">' + T('正在回溯对话…') + '</p>'; $('#recapReload').disabled = true;
+  if (!$('#recapDlg').open) $('#recapDlg').showModal();
+  try {
+    const data = await recapFetch(sid);
+    if (request !== recapRequest || !$('#recapDlg').open) return;
+    recapData = data; renderRecap(data); scheduleRecapCheck();
+  } catch (e) {
+    if (request === recapRequest && $('#recapDlg').open) $('#recapBody').innerHTML = '<p>' + T('回顾读取失败，请重试；这不代表没有历史。') + '</p>';
+  } finally { if (request === recapRequest) $('#recapReload').disabled = false; }
+}
+function renderRecap(data) {
+  const body = $('#recapBody');
+  if (!data.ok) { body.innerHTML = '<p role="status">' + esc(data.error?.message || data.error || T('无法读取对话；这不代表没有历史。')) + '</p>'; return; }
+  const messages = data.messages || [], byId = new Map(messages.map(m => [m.id, m]));
+  const link = id => id && byId.has(id) ? '<button class="plain" data-recap-source="' + esc(id) + '">' + T('查看原文') + '</button>' : '';
+  const quote = (item, n = 340) => { if (!item) return '<p>' + T('可读记录不足，无法可靠判断。') + '</p>'; const source = byId.get(item.messageId || item.id); return '<div class="recap-quote">' + esc(recapClip(item.text, n)) + '</div><div class="recap-source">' + esc((source ? (source.role === 'user' ? T('你') : T('助手')) + ' · ' : '') + recapTime(item.at)) + ' ' + link(item.messageId || item.id) + '</div>'; };
+  const section = (title, content) => '<section class="recap-section"><h2>' + T(title) + '</h2>' + content + '</section>';
+  const recap = data.recap || {}, coverage = data.coverage || {};
+  const activeMessages = messages.filter(m => !m.inherited);
+  const recentUsers = activeMessages.filter(m => m.role === 'user'), latestUser = recentUsers.at(-1);
+  const assistants = activeMessages.filter(m => m.role === 'assistant'), latestAssistant = assistants.at(-1);
+  const question = data.current?.question;
+  const questionSource = question && [...activeMessages].reverse().find(m => m.role === 'assistant' && m.text.includes(question));
+  let questionContext = null;
+  if (questionSource) { const at = questionSource.text.indexOf(question); questionContext = { ...questionSource, text: questionSource.text.slice(Math.max(0, at - 100), at + question.length + 380) }; }
+  const caveats = [];
+  if (!coverage.complete || coverage.truncated) caveats.push(T('这是部分可读记录，存在未显示或未读取的内容。'));
+  if (coverage.malformedLines) caveats.push(T('部分日志行损坏，已保留可读内容。'));
+  if (coverage.incompleteTail || coverage.changedDuringRead) caveats.push(T('记录仍在写入或读取时发生变化，请稍后更新。'));
+  body.innerHTML = '<p class="recap-source">' + T('按原文摘录整理，未调用模型；助手报告不等于已独立验证。阅读不会继续任务或改变处理状态。') + '</p>' +
+    '<p id="recapStale" role="status"' + (coverage.changedDuringRead ? '' : ' hidden') + '>' + T('对话有新内容，这份回顾可能过期；点击“更新回顾”。') + '</p>' +
+    (caveats.length ? '<p role="status">' + caveats.map(esc).join(' ') + '</p>' : '') +
+    section('最初想做什么', quote(recap.goal, 260)) +
+    section('已有回复与进展（助手曾报告）', '<p class="recap-source">' + T('以下是助手的交付摘录，不把计划或建议当作已完成操作。') + '</p>' + ((recap.reportedWork || []).filter(x => x.messageId !== latestAssistant?.id).slice(-1).map(x => quote(x, 180)).join('') || '<p>' + T('可读记录不足，无法可靠判断。') + '</p>')) +
+    section('目前讨论到哪一步', '<strong>' + T('你最近问的是') + '</strong>' + quote(latestUser, 220) + '<strong>' + T(latestAssistant?.final ? '助手最近的结论或建议' : '助手最近的消息（未确认交付）') + '</strong>' + quote(latestAssistant, 320) + (latestUser && latestAssistant && messages.indexOf(latestUser) > messages.indexOf(latestAssistant) ? '<p>' + T('最新用户消息之后尚未读到助手回复，上面是此前的回复。') + '</p>' : '')) +
+    section('为什么显示待跟进／需要确认什么', question ? '<p>' + T('看板自动标记的句子（可能误判）：') + '</p><div class="recap-quote">' + esc(question) + '</div>' + (questionContext ? '<strong>' + T('这句的原文上下文') + '</strong>' + quote(questionContext, 340) : '') + '<p class="recap-source">' + T('反问、小标题也可能触发自动标记；请结合上下文判断是否真的需要回答。') + '</p>' : '<p>' + T('日志没有提供可可靠确认的待回答项；请结合最近交流判断。') + '</p>') +
+    '<details class="recap-section"><summary>' + T('关键背景与后续请求') + '</summary>' + ((recap.background || []).slice(0, 3).map(x => quote(x, 260)).join('') || '<p>' + T('没有更多可提取的背景，请查看原文。') + '</p>') + '<h2>' + T('最近几轮的上下文') + '</h2>' + (recap.recentContext || []).map(x => quote(x, 300)).join('') + '</details>' +
+    '<details id="recapHistory" class="recap-section"><summary>' + T('展开原始对话（按记录顺序）') + ' · ' + messages.length + '</summary><div id="recapMessages"></div><button class="bordered" id="recapMore">' + T('显示更多原文') + '</button></details>';
+  let shown = 0;
+  const show = target => {
+    const end = Math.min(messages.length, Math.max(shown + 30, target || 0));
+    for (const message of messages.slice(shown, end)) {
+      const el = document.createElement('section'); el.className = 'recap-message'; el.dataset.messageId = message.id;
+      el.innerHTML = '<div class="recap-source">' + esc((message.role === 'user' ? T('你') : T('助手')) + ' · ' + recapTime(message.at) + (message.inherited ? ' · ' + T('继承的父聊天上下文') : '') + (message.textTruncated ? ' · ' + T('此条正文未完整显示') : '')) + '</div><div class="recap-quote"></div>';
+      $('.recap-quote', el).textContent = message.text; $('#recapMessages').append(el);
+    }
+    shown = end; $('#recapMore').hidden = shown >= messages.length;
+  };
+  $('#recapHistory').addEventListener('toggle', () => { if ($('#recapHistory').open && !shown) show(); });
+  $('#recapMore').onclick = () => show();
+  body.onclick = event => {
+    const button = event.target.closest('[data-recap-source]'); if (!button) return;
+    const index = messages.findIndex(m => m.id === button.dataset.recapSource); if (index < 0) return;
+    $('#recapHistory').open = true; if (shown <= index) show(index + 1);
+    const target = [...$('#recapMessages').children].find(el => el.dataset.messageId === button.dataset.recapSource);
+    target?.scrollIntoView({ block: 'start', behavior: 'auto' });
+  };
+}
+function scheduleRecapCheck() {
+  clearTimeout(recapCheckTimer); const sid = recapSid, version = recapData?.version, request = recapRequest;
+  if (!sid || !version || !$('#recapDlg').open) return;
+  recapCheckTimer = setTimeout(async () => {
+    try { const data = await api('/api/recap?check=1&sid=' + encodeURIComponent(sid) + '&version=' + encodeURIComponent(version));
+      if (request !== recapRequest || !$('#recapDlg').open) return;
+      const node = $('#recapStale');
+      if (node) { node.hidden = !(data.stale || !data.ok || recapData?.coverage?.changedDuringRead); node.textContent = T(!data.ok ? '源记录暂时不可读，当前回顾只是上次读取的快照。' : '对话有新内容，这份回顾可能过期；点击“更新回顾”。'); }
+    } catch { if (request === recapRequest && $('#recapStale')) { $('#recapStale').hidden = false; $('#recapStale').textContent = T('暂时无法检查新内容，当前回顾可能过期。'); } } finally { if (request === recapRequest) scheduleRecapCheck(); }
+  }, 10000);
+}
+$('#detailRecap').onclick = () => openRecap(detailSid, $('#dTitle').textContent);
+$('#recapReload').onclick = () => openRecap(recapSid, recapData?.title || '');
+$('#recapDlg').addEventListener('close', () => { recapRequest++; recapSid = null; recapData = null; clearTimeout(recapCheckTimer); });
+
 // ── 弹层里回话（11/17 Khalil：「预览的时候，还有把窗口放大的时候，我回复不了……我希望一边预览，一边回复」）──
 // 预览和放大看都是 showModal()：页面其余部分不能点，卡片上的回话框被挡在后面。
 // 做法：弹层开着时，把来源那张卡自己的回话框整个挪进弹层底部（自动续跑那一行 .ap、预判三条 .sg、输入框 .reply），关掉再还回卡片。
@@ -2362,6 +2648,201 @@ $('#nCm').addEventListener('click', () => setCm(!cmOn()));
 function keepPick() { pick.model = pick.model || {}; pick.effort = pick.effort || {}; pick.model[pick.provider] = $('#nModel').value.trim(); pick.effort[pick.provider] = $('#nEffort').value; pick.account = $('#nAcct').value; store('ccb_new', pick); }
 // 在哪一列的列头点的「新任务」：{key, name}，跟着任务交给服务，新卡落进那一列。右上角、⌘N 和「其他」那一列开的是 null（它自己找项目）
 let newIn = null;
+let taskMode = 'once', newSubmission = null, taskMenuTimer;
+const TASK_MODE_NAMES = { once: '一次性任务', complex: '复杂任务', discuss: '先讨论方案' };
+function setTaskMenu(open, focus = false) {
+  if (open && (!last?.workflows?.enabled || $('#nGo').disabled)) return;
+  clearTimeout(taskMenuTimer); $('#nModes').hidden = !open; $('#nModeToggle').setAttribute('aria-expanded', String(open));
+  if (open && focus) $('#nModes [aria-checked="true"]').focus();
+}
+$('#nLaunch').addEventListener('pointerenter', () => setTaskMenu(true));
+$('#nLaunch').addEventListener('pointerleave', () => { taskMenuTimer = setTimeout(() => setTaskMenu(false), 180); });
+$('#nModeToggle').onclick = () => setTaskMenu($('#nModes').hidden, true);
+$('#nLaunch').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setTaskMenu(false); $('#nGo').focus(); }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if ($('#nModes').hidden) { setTaskMenu(true, true); return; }
+    const buttons = [...$('#nModes').querySelectorAll('button')], at = buttons.indexOf(document.activeElement);
+    buttons[(at + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length].focus();
+  }
+});
+$('#nLaunch').addEventListener('focusout', () => setTimeout(() => { if (!$('#nLaunch').contains(document.activeElement)) setTaskMenu(false); }, 0));
+$('#nModes').onclick = e => {
+  const button = e.target.closest('[data-task-mode]'); if (!button) return;
+  taskMode = button.dataset.taskMode;
+  for (const b of $('#nModes').querySelectorAll('button')) b.setAttribute('aria-checked', String(b === button));
+  $('#nModeLabel').textContent = T(TASK_MODE_NAMES[taskMode]); setTaskMenu(false); $('#nGo').focus();
+};
+
+let workflowDecisionMessage = '';
+let workflowJobs = [], selectedWorkflow = null, workflowStamp = '', workflowBusy = false, workflowReload = false, workflowActionBusy = false;
+const workflowDrafts = new Map(), workflowRequests = new Map();
+const WORKFLOW_STATUS = { waiting_approval: '等待授权', queued: '排队中', running: '运行中', completed: '已完成', needs_input: '需要你处理', needs_attention: '检查未通过', awaiting_confirmation: '等待方案确认', failed: '失败', interrupted: '已中断', cancelled: '已取消后续调度', blocked: '受阻' };
+const WORKFLOW_ROLES = { operator: '实际操作', reviewer: '独立检查', summarizer: '汇总', planner: '讨论方案', chief: '总负责人', decomposition: '任务拆解', research: '研究', coding: '代码实现', documentation: '文档整理', tester: '独立测试执行', qa: '独立验收' };
+const WORKFLOW_REPORT_KEYS = { summary: '摘要', evidence: '证据', blockers: '阻塞事项', findings: '检查发现', limitations: '限制', questions: '待澄清问题', steps: '计划步骤', risks: '风险', decision: '决策', outcome: '结果', verdict: '验收结论', role: '职责', task: '委派任务', verifiedWriteRevision: '最近验收版本' };
+const WORKFLOW_EVIDENCE = { real_environment: '真实环境（助手报告）', isolated: '隔离环境（助手报告）', static: '静态检查（助手报告）' };
+const workflowValue = value => typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value, null, 2);
+const workflowActualModel = stage => typeof stage.actualModel === 'string' && stage.actualModel ? stage.actualModel : T('未报告实际模型');
+function workflowReport(value) {
+  if (!value || typeof value !== 'object') return value ? '<pre class="workflow-report">' + esc(workflowValue(value)) + '</pre>' : '';
+  return Object.entries(value).map(([key, content]) => {
+    const label = '<div class="workflow-report-label">' + esc(T(WORKFLOW_REPORT_KEYS[key] || key)) + '</div>';
+    if (key === 'evidence' && Array.isArray(content)) return label + content.map(item => '<div class="workflow-evidence"><strong>' + esc(T(WORKFLOW_EVIDENCE[item?.kind] || '未分类证据')) + '</strong><div class="workflow-report">' + esc(typeof item === 'string' ? item : workflowValue(item?.detail ?? item)) + '</div>' + (typeof item?.reference === 'string' && item.reference ? '<button class="plain" data-workflow-evidence="' + esc(item.reference) + '">' + T('查看引用的测试记录') + ' · ' + esc(item.reference) + '</button>' : '') + '</div>').join('');
+    const enums = { delegate: '继续委派', complete: '提交最终结果', completed: '已完成', needs_input: '需要你处理', failed: '失败', blocked: '受阻', pass: '通过', changes_requested: '需要返工' };
+    const text = key === 'role' && WORKFLOW_ROLES[content] ? T(WORKFLOW_ROLES[content]) : ['decision', 'outcome', 'verdict'].includes(key) && enums[content] ? T(enums[content]) : Array.isArray(content) ? content.map(workflowValue).join('\n') : workflowValue(content);
+    return label + '<pre class="workflow-report">' + esc(text) + '</pre>';
+  }).join('');
+}
+function workflowExecution(stage) {
+  const records = Array.isArray(stage.executionEvidence) ? stage.executionEvidence : [];
+  if (!records.length) return '';
+  return '<h4>' + T('宿主记录的测试执行') + '</h4>' + records.map(record => '<section class="workflow-execution" data-evidence-id="' + esc(record.id || '') + '"><strong>' + esc(record.kind === 'isolated' ? T('隔离环境实际执行') : record.kind || T('未分类证据')) + '</strong><div class="workflow-thread">' + esc(record.id || '') + '</div><div class="workflow-report-label">' + T('命令') + '</div><pre class="workflow-report">' + esc(record.command || T('未记录命令')) + '</pre><p>' + esc(T('退出码') + '：' + (typeof record.exitCode === 'number' ? record.exitCode : T('未记录退出码'))) + '</p><div class="workflow-report-label">' + T('输出') + '</div><pre class="workflow-report">' + esc(workflowValue(record.output) || T('无输出')) + '</pre><div class="workflow-thread">' + esc(T('执行目录') + '：' + (record.cwd || '')) + '<br>' + esc(T('快照校验值') + '：' + (record.manifestHash || '')) + '</div>' + (record.limitations ? '<pre class="workflow-report">' + esc(T('限制') + '：' + (Array.isArray(record.limitations) ? record.limitations.map(workflowValue).join('\n') : workflowValue(record.limitations))) + '</pre>' : '') + '</section>').join('');
+}
+function workflowValidation(stage) {
+  const evidence = stage.validationEvidence;
+  if (!evidence) return '';
+  const files = Array.isArray(evidence) ? evidence : Array.isArray(evidence.files) ? evidence.files : [];
+  const incomplete = evidence.complete === false || files.some(file => file.complete === false || file.truncated);
+  return '<h4>' + esc(T('测试脚本证据')) + '</h4>' + (incomplete ? '<div class="workflow-hold" role="status">' + esc(T('测试脚本证据不完整，尚未完整核验；不能据此认定测试通过。')) + '</div>' : '') + (evidence.limitations ? '<pre class="workflow-report">' + esc(workflowValue(evidence.limitations)) + '</pre>' : '') + files.map(file => '<details class="workflow-execution"><summary>' + esc(file.name || file.path || T('测试脚本')) + (file.complete === false || file.truncated ? ' · ' + esc(T('未完整核验')) : '') + '</summary><div class="workflow-thread">' + esc(file.path || '') + '<br>' + esc('SHA-256：' + (file.sha256 || T('未记录'))) + '</div><pre class="workflow-report">' + esc(workflowValue(file.content ?? file.text) || T('未提供脚本内容')) + '</pre></details>').join('');
+}
+function workflowHierarchy(job, opened) {
+  const stages = Array.isArray(job.stages) ? job.stages : [], byIndex = new Map(stages.map(s => [s.index, s])), children = new Map(), parents = new Map(), roots = [], pending = [];
+  const parentOf = stage => {
+    const parent = Number.isInteger(stage.parentIndex) ? byIndex.get(stage.parentIndex) : null;
+    return parent && parent !== stage && parent.threadId && stage.parentThreadId === parent.threadId ? parent : null;
+  };
+  for (const stage of stages) {
+    if (!stage.threadId) { pending.push(stage); continue; }
+    let parent = parentOf(stage), ancestor = parent; const seen = new Set([stage.index]);
+    while (ancestor) { if (seen.has(ancestor.index)) { parent = null; break; } seen.add(ancestor.index); ancestor = parentOf(ancestor); }
+    if (parent) { parents.set(stage.index, parent); if (!children.has(parent.index)) children.set(parent.index, []); children.get(parent.index).push(stage); } else roots.push(stage);
+  }
+  const stageHTML = stage => {
+    const parent = parents.get(stage.index), relation = parent ? T('实际委派父线程') + '：' + parent.threadId : stage.parentIndex != null || stage.parentThreadId ? T('父线程尚未核验') : T('任务内独立线程');
+    return '<li data-tree-stage="' + esc(stage.index) + '"' + (parent ? ' data-parent-stage="' + esc(parent.index) + '"' : '') + '><details data-workflow-stage="' + esc(stage.index) + '"' + (opened.has(String(stage.index)) ? ' open' : '') + '><summary><strong>' + esc((stage.index + 1) + '. ' + T(WORKFLOW_ROLES[stage.role] || stage.role)) + '</strong> · ' + esc(T(WORKFLOW_STATUS[stage.status] || stage.status)) + '<span class="workflow-model">' + esc(T('实际模型') + '：' + workflowActualModel(stage)) + '</span></summary><div class="workflow-thread">' + esc(T('线程') + '：' + stage.threadId) + (stage.turnId ? '<br>' + esc(T('回合') + '：' + stage.turnId) : '') + '<br>' + esc(relation) + '</div>' + (stage.progress ? '<p>' + esc(stage.progress) + '</p>' : '') + (stage.error ? '<pre class="workflow-report">' + esc(workflowValue(stage.error)) + '</pre>' : '') + workflowExecution(stage) + workflowValidation(stage) + workflowReport(stage.report) + '</details>' + (children.has(stage.index) ? '<ul>' + children.get(stage.index).map(stageHTML).join('') + '</ul>' : '') + '</li>';
+  };
+  return '<h3>' + T('真实线程关系') + '</h3><p>' + T('仅展示本任务已记录的助手线程，不把其他聊天归入本任务。') + '</p><ul class="workflow-tree">' + roots.map(stageHTML).join('') + '</ul>' + pending.map(stage => '<p>' + esc((stage.index + 1) + '. ' + T(WORKFLOW_ROLES[stage.role] || stage.role) + ' · ' + T('尚未创建真实线程') + ' · ' + T(WORKFLOW_STATUS[stage.status] || stage.status)) + '</p>').join('');
+}
+function paintWorkflowStatus(data) {
+  $('#workflowBtn').hidden = !data;
+  $('#chiefBtn').hidden = !data;
+  $('#nModeToggle').hidden = !data?.enabled;
+  const n = (data?.jobs || []).filter(j => ['queued', 'running', 'awaiting_confirmation', 'needs_input', 'needs_attention', 'failed', 'interrupted', 'blocked'].includes(j.status) || j.writeSafetyHold).length;
+  $('#workflowBtn').textContent = T('任务流程') + (n ? ' ' + n : '');
+  const stamp = JSON.stringify(data);
+  if ($('#workflowDlg').open && stamp !== workflowStamp) { workflowStamp = stamp; loadWorkflows(); }
+}
+async function openWorkflows(id) {
+  selectedWorkflow = id || null; if (!$('#workflowDlg').open) $('#workflowDlg').showModal();
+  await loadWorkflows();
+}
+$('#workflowBtn').onclick = () => openWorkflows();
+let chiefTeams = [], chiefSending = false, chiefLoading = false, chiefRequest = null;
+function renderChief() {
+  const team = chiefTeams.find(t => t.id === $('#chiefTeam').value);
+  $('#chiefScope').textContent = team ? team.cwd : T('尚未绑定项目团队。');
+  $('#chiefHistory').innerHTML = team ? team.chat.messages.map(m => '<section class="workflow-entry"><strong>' + esc(m.text) + '</strong>' + (m.reply ? '<div class="md">' + md(m.reply) + '</div>' : '') + (m.error ? '<p>' + esc(m.error) + '</p>' : '') + (m.state === 'thinking' ? '<p>' + T('Chief 正在处理…') + '</p>' : '') + (m.jobId ? '<button class="bordered" data-chief-job="' + esc(m.jobId) + '">' + T('查看任务流程') + '</button>' : '') + '</section>').join('') + team.jobs.map(j => '<button class="bordered" data-chief-job="' + esc(j.id) + '">' + T('查看任务流程') + '</button><p>' + esc(T(WORKFLOW_STATUS[j.status] || j.status) + ' · ' + (j.result?.summary || j.error || j.phase || '')) + '</p>').join('') : '';
+  $('#chiefSend').disabled = chiefSending || !team || team.busy;
+}
+async function loadChief() {
+  if (chiefLoading) return; chiefLoading = true;
+  try {
+    const response = await api('/api/chief'); if (!response.ok) throw new Error(response.error || T('项目 Chief 尚未就绪。'));
+    chiefTeams = response.teams;
+    const selected = $('#chiefTeam').value;
+    $('#chiefTeam').innerHTML = chiefTeams.map(t => '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>').join('');
+    if (chiefTeams.some(t => t.id === selected)) $('#chiefTeam').value = selected;
+    renderChief();
+  } catch (error) { $('#chiefMessage').textContent = error.message; }
+  finally { chiefLoading = false; }
+}
+$('#chiefBtn').onclick = () => { $('#chiefDlg').showModal(); loadChief(); };
+$('#chiefTeam').onchange = () => { $('#chiefInput').value = ''; chiefRequest = null; renderChief(); };
+$('#chiefHistory').onclick = event => { const button = event.target.closest('[data-chief-job]'); if (button) openWorkflows(button.dataset.chiefJob); };
+$('#chiefSend').onclick = async () => {
+  if (chiefSending) return;
+  const text = $('#chiefInput').value.trim(), teamId = $('#chiefTeam').value; if (!text || !teamId) return;
+  const payload = JSON.stringify({ teamId, text });
+  if (chiefRequest?.payload !== payload) chiefRequest = { payload, id: crypto.randomUUID() };
+  chiefSending = true; $('#chiefSend').disabled = true; $('#chiefTeam').disabled = true; $('#chiefMessage').textContent = T('Chief 正在处理…');
+  try {
+    const response = await api('/api/chief/send', { teamId, text, requestId: chiefRequest.id });
+    if (!response.ok) { chiefRequest = null; throw new Error(response.error); }
+    if (response.message.state === 'failed') { chiefRequest = null; throw new Error(response.message.error); }
+    if ($('#chiefInput').value.trim() === text) $('#chiefInput').value = '';
+    chiefRequest = null; $('#chiefMessage').textContent = '';
+  } catch (error) { $('#chiefMessage').textContent = error.message; }
+  finally { chiefSending = false; $('#chiefTeam').disabled = false; await loadChief(); renderChief(); refresh(); }
+};
+setInterval(() => { if ($('#chiefDlg').open) loadChief(); }, 3000);
+async function loadWorkflows() {
+  if (workflowBusy) { workflowReload = true; return; } workflowBusy = true;
+  try { const r = await api('/api/workflows'); if (!r.ok) throw new Error(r.error || T('任务流程不可用。')); workflowJobs = r.jobs; renderWorkflows(); }
+  catch (e) { toast(e.message || T('总控台服务没应答')); workflowStamp = ''; }
+  finally { workflowBusy = false; if (workflowReload) { workflowReload = false; loadWorkflows(); } }
+}
+function workflowDecision(job) {
+ const pending=job.stages.filter(s=>s.pendingApproval&&s.status==='waiting_approval');
+ const stopped=['failed','interrupted','needs_input','blocked'].includes(job.status)&&job.mode!=='discuss';
+ if(!pending.length&&!stopped)return '';
+ const stage=job.stages.at(-1), detail=workflowValue(job.error||stage?.error||stage?.report||'未提供具体原因');
+ const expired=!pending.length&&/requestApproval|授权|审批/.test(detail);
+ let h='<section class="workflow-hold">';
+ if(pending.length) h+=pending.map(s=>{const p=s.pendingApproval;return '<h3>需要你决定：是否允许这一次额外权限操作？</h3><p>'+esc(p.reason||'执行助手正在等待你的授权。')+'</p><p>允许：仅放行这条命令，可能超出当前沙盒限制，不修改长期权限。拒绝：不执行这条命令，由助手处理拒绝结果。取消：不执行这条命令，并中断当前助手的执行轮次；已完成的文件改动不会撤销，其他已运行的并行助手不因此停止。</p><details><summary>完整命令和工作目录</summary><p>'+esc(p.cwd)+'</p><pre class="workflow-report">'+esc(p.command)+'</pre></details>'+['accept','decline','cancel'].filter(d=>p.availableDecisions.includes(d)).map(d=>'<button class="bordered" data-workflow-action="approve" data-approval-id="'+esc(p.id)+'" data-decision="'+d+'">'+(d==='accept'?'允许这一次':d==='cancel'?'不允许，取消本次执行':'拒绝执行')+'</button>').join('');}).join('');
+ else h+='<h3>'+(expired?'旧授权请求已失效，需要重新发起':'任务已停止，需要你决定下一步')+'</h3><p>'+(expired?'原执行连接已结束，无法批准旧请求。重新发起后，如仍需额外权限，会再次请求授权。':'可以重试未完成阶段，或填写要求后继续。已完成阶段会保留。')+'</p><details><summary>停止原因与技术详情</summary><pre class="workflow-report">'+esc(detail)+'</pre></details>';
+ h+='<label for="workflowDecisionReply">你的补充要求或处理意见</label><textarea id="workflowDecisionReply" maxlength="12000" placeholder="例如：不要扩大权限，改用其他验证方式。"></textarea>';
+ if(pending.length)h+='<p>意见会保存到任务，不会改变本次命令。要修改方案，请先拒绝或取消，待助手停下后按补充要求继续。</p>';
+ if(stopped&&!pending.length&&!job.writeSafetyHold)h+='<p>点击会实际恢复未完成阶段，并将补充要求交给助手。</p><button class="primary" data-workflow-action="resume" data-expected-stage="'+stage?.index+'">重新发起／按补充要求继续</button>';
+ return h+'<p role="status" id="workflowDecisionStatus"></p></section>';
+}
+function renderWorkflows() {
+  if (['workflowReply','workflowDecisionReply'].includes(document.activeElement?.id)) return;
+  const body = $('#workflowBody');
+  const job = workflowJobs.find(j => j.id === selectedWorkflow);
+  if (!job) {
+    body.innerHTML = workflowJobs.length ? workflowJobs.map(j => '<div class="workflow-entry"><button data-workflow="' + esc(j.id) + '"><strong>' + esc(cut(j.prompt, 90)) + '</strong><br>' + esc(T(TASK_MODE_NAMES[j.mode]) + ' · ' + T(WORKFLOW_STATUS[j.status] || j.status) + (j.phase ? ' · ' + T(WORKFLOW_ROLES[j.phase] || j.phase) : '') + (j.writeSafetyHold ? ' · ' + T('目录占用尚未解除') : '')) + '</button></div>').join('') : '<p>' + T('还没有任务流程。') + '</p>';
+    return;
+  }
+  const opened = new Set(body.dataset.job === job.id ? [...body.querySelectorAll('details[data-workflow-stage][open]')].map(el => el.dataset.workflowStage) : []);
+  body.dataset.job = job.id;
+  body.innerHTML = '<button class="plain" data-workflow-back>' + T('返回任务列表') + '</button><h2>' + esc(job.prompt) + '</h2><p role="status">' + esc(T(TASK_MODE_NAMES[job.mode]) + ' · ' + T(WORKFLOW_STATUS[job.status] || job.status)) + '</p><p>' + esc(job.cwd) + '</p>' +
+    '<div class="workflow-context"><strong>' + T('YOU（你／当前对话）') + '</strong><p>' + T('本任务的目标入口；外部桌面对话未绑定、未接管。') + '</p></div>' +
+    (job.error ? '<details><summary>原始错误记录</summary><pre class="workflow-report">' + esc(workflowValue(job.error)) + '</pre></details>' : '') +
+    workflowDecision(job) +
+    (job.writeSafetyHold ? '<div class="workflow-hold" role="status"><strong>' + T('目录占用尚未解除') + '</strong><p>' + T('写入助手是否停止尚未确认；当前目录保持占用，不会自动重放任务。') + '</p><button class="bordered" data-workflow-action="acknowledgeStop">' + T('我已核对停止，解除目录占用') + '</button></div>' : '') +
+    (job.chiefModel ? '<h3>' + T('负责人模型选择') + '</h3><p>' + esc(job.chiefModel.model || '') + (job.chiefModel.effort ? ' · ' + esc(T('强度') + '：' + job.chiefModel.effort) : '') + '</p><p>' + esc(T('选择理由') + '：' + (job.chiefModel.reason || '')) + '</p>' : '') +
+    (job.hierarchyVersion === 2 ? '<p class="workflow-budget">' + esc(T('阶段上限') + '：' + Math.max(0, job.stages.length - (job.hierarchyStartIndex || 0)) + ' / ' + (job.hierarchyStageLimit ?? 12) + ' · ' + T('返工次数') + '：' + (job.reworkCount || 0) + ' / ' + (job.reworkLimit ?? 2) + ' · ' + T('写入版本') + '：' + (job.writeRevision || 0) + (job.lastQa ? ' · ' + T('最近验收版本') + '：' + job.lastQa.writeRevision : '')) + '</p>' : '') +
+    '<p>' + T('负责人、拆解、讨论与 QA 只读核查；研究可检索公开网页；代码和文档助手按授权执行。') + '</p><p>' + T('独立测试在隔离副本实际执行；QA 核查证据，不等于已验证真实桌面操作。') + '</p>' +
+    '<p>' + T('证据分类来自该助手的报告；请结合具体记录判断，不能仅凭分类认定已验证。') + '</p>' +
+    (job.result ? '<h3>' + T('当前结果') + '</h3>' + workflowReport(job.result) : '') +
+    workflowHierarchy(job, opened) +
+    (job.status === 'awaiting_confirmation' || (job.mode === 'discuss' && job.status === 'needs_input') ? '<label for="workflowReply">' + T('继续补充需求（不会开始执行）') + '</label><textarea id="workflowReply"></textarea><div class="workflow-actions"><button class="bordered" data-workflow-action="discuss">' + T('继续讨论') + '</button>' + (job.status === 'awaiting_confirmation' ? '<button class="primary" data-workflow-action="confirm" data-execution-mode="once">' + T('按一次性任务执行') + '</button><button class="primary" data-workflow-action="confirm" data-execution-mode="complex">' + T('按复杂任务执行') + '</button>' : '') + '</div>' : '') +
+    (['queued', 'running'].includes(job.status) ? '<div class="workflow-actions"><button class="bordered" data-workflow-action="cancel">' + T('请求停止任务') + '</button></div>' : '');
+  if ($('#workflowReply')) { $('#workflowReply').value = workflowDrafts.get(job.id) || ''; $('#workflowReply').oninput = e => workflowDrafts.set(job.id, e.target.value); $('#workflowReply').onblur = () => setTimeout(renderWorkflows, 100); }
+  if ($('#workflowDecisionReply')) { $('#workflowDecisionReply').value = workflowDrafts.get(job.id) || ''; $('#workflowDecisionReply').oninput = e => workflowDrafts.set(job.id, e.target.value); }
+  for (const b of body.querySelectorAll('[data-workflow-action]')) { b.disabled = workflowActionBusy; b.dataset.revision = String(job.planRevision); }
+}
+$('#workflowBody').addEventListener('click', async e => {
+  const target = e.target.closest('button'); if (!target) return;
+  if (target.hasAttribute('data-workflow-back')) { selectedWorkflow = null; renderWorkflows(); return; }
+  if (target.dataset.workflow) { selectedWorkflow = target.dataset.workflow; renderWorkflows(); return; }
+  if (target.dataset.workflowEvidence) { const record = [...$('#workflowBody').querySelectorAll('[data-evidence-id]')].find(el => el.dataset.evidenceId === target.dataset.workflowEvidence); if (!record) { toast(T('未找到对应的宿主测试记录')); return; } const details = record.closest('details'); if (details) details.open = true; record.scrollIntoView({ block: 'start' }); return; }
+  const action = target.dataset.workflowAction; if (!action || workflowActionBusy) return;
+  const id = selectedWorkflow, text = workflowDrafts.get(id) || '', mode = target.dataset.executionMode, expectedRevision = Number(target.dataset.revision);
+  if (action === 'confirm' && text.trim()) { toast(T('请先发送补充内容，等方案更新后再确认执行。')); return; }
+  const key = JSON.stringify({ id, action, text, mode, expectedRevision, approvalId: target.dataset.approvalId, decision: target.dataset.decision, expectedStage: target.dataset.expectedStage });
+  if (!workflowRequests.has(key)) workflowRequests.set(key, crypto.randomUUID());
+  workflowDecisionMessage = ''; workflowActionBusy = true; renderWorkflows();
+  try {
+    if (action === 'acknowledgeStop' && !await confirmSheet({ title: '确认写入助手已停止？', text: '请先在对应聊天核对所有写入助手确已停止。确认只解除目录占用，不会继续或重放任务。', ok: '确认已停止并解除占用' })) return;
+    const r = await api('/api/workflows/action', { id, action, text, mode, expectedRevision, expectedStage: Number(target.dataset.expectedStage), approvalId:target.dataset.approvalId, decision:target.dataset.decision, requestId: workflowRequests.get(key) });
+    if (!r.ok) throw new Error(r.error || T('没成功'));
+    if (['discuss','resume','approve'].includes(action)) workflowDrafts.delete(id);
+    await loadWorkflows(); refresh();
+  } catch (error) { workflowDecisionMessage = error.message || T('总控台服务没应答'); }
+  finally { workflowActionBusy = false; renderWorkflows(); const msg = $('#workflowDecisionStatus'); if (msg) msg.textContent = workflowDecisionMessage || '已提交，请查看上方最新任务状态。'; else if (workflowDecisionMessage) toast(workflowDecisionMessage); }
+});
 const NEW_TIP = '直接写任务，它在后台做，做完会站到最前面。放在哪个文件夹它自己定。留空 = 开一个空会话，等你在卡片里说第一句。';
 const NEW_TIP_IN = '直接写任务，它就在这个项目里做，做完会站到最前面。留空 = 开一个空会话，等你在卡片里说第一句。';
 function openNew(proj) {
@@ -2370,12 +2851,27 @@ function openNew(proj) {
   $('#nPrompt').placeholder = T(newIn ? NEW_TIP_IN : NEW_TIP);
   setCm(false); fillNew(); $('#nMsg').textContent = T('⌘ 回车开工'); $('#nMsg').style.color = ''; $('#newDlg').showModal(); $('#nPrompt').focus(); }
 async function goNew() {
-  const prompt = $('#nPrompt').value.trim(), cwd = '~';      // 不问放哪个文件夹：都开在主目录，服务会让它自己找项目文件夹
-  keepPick(); $('#nGo').disabled = true; let r; const nFiles = newHold.atts.length;
-  try { const files = await uploadAtts(newHold.atts); r = await api('/api/new', { prompt, cwd, files, project: newIn, provider: pick.provider, model: pick.model[pick.provider] || '', effort: pick.effort[pick.provider] || '', account: pick.provider === 'claude' ? pick.account || '' : '', ...(pick.provider === 'claude' ? { codeMode: cmOn() } : {}) }); }
+  if ($('#nGo').disabled) return;
+  const prompt = $('#nPrompt').value.trim(), cwd = $('#nCwd').value.trim() || '~';
+  if (taskMode !== 'once' && !prompt) { $('#nMsg').textContent = T('请先填写任务内容'); return; }
+  keepPick();
+  if (taskMode !== 'once' && (!last?.workflows?.enabled || pick.provider !== 'codex')) { $('#nMsg').textContent = T('Codex 任务流程尚未就绪。'); return; }
+  $('#nGo').disabled = true; let r; const nFiles = newHold.atts.length;
+  setTaskMenu(false);
+  try {
+    const files = await uploadAtts(newHold.atts);
+    const payload = { prompt, cwd, files, project: newIn, provider: pick.provider, model: pick.model[pick.provider] || '', effort: pick.effort[pick.provider] || '', account: pick.provider === 'claude' ? pick.account || '' : '', ...(pick.provider === 'claude' ? { codeMode: cmOn() } : {}) };
+    if (last?.workflows?.enabled && pick.provider === 'codex' && prompt) {
+      payload.taskMode = taskMode;
+      const fingerprint = JSON.stringify(payload);
+      if (!newSubmission || newSubmission.fingerprint !== fingerprint) newSubmission = { fingerprint, requestId: crypto.randomUUID() };
+      payload.requestId = newSubmission.requestId;
+    }
+    r = await api('/api/new', payload);
+  }
   catch (e) { r = { ok: false, error: e && /附件|MB/.test(e.message || '') ? e.message : '总控台服务没应答' }; }
   $('#nGo').disabled = false;
-  if (r.ok) { $('#nPrompt').value = ''; saveDraft(NEW_DRAFT, ''); newHold.atts = []; drawAtts(newHold, $('#nAtts')); $('#newDlg').close(); if (!prompt && !nFiles) focusNew = r.name; refresh(); } else { $('#nMsg').textContent = T(r.error || '没开起来'); $('#nMsg').style.color = 'var(--danger)'; }
+  if (r.ok) { newSubmission = null; $('#nPrompt').value = ''; saveDraft(NEW_DRAFT, ''); newHold.atts = []; drawAtts(newHold, $('#nAtts')); $('#newDlg').close(); if (r.workflowId) openWorkflows(r.workflowId); else if (!prompt && !nFiles) focusNew = r.name; refresh(); } else { $('#nMsg').textContent = T(r.error || '没开起来'); $('#nMsg').style.color = 'var(--danger)'; }
 }
 // ⌘T：不弹窗，直接开一个空会话（相当于「新开一个终端，里面已经是 Claude Code」）
 let focusNew = null, wantFocus = null, pickNext = null;
@@ -2740,8 +3236,8 @@ function orgFlights(a, b) {
 function orgNode(sid) {
   let x = onodes.get(sid); if (x) return x;
   const li = document.createElement('li'); li.className = 'oli'; li.dataset.sid = sid;
-  li.innerHTML = '<div class="onode" tabindex="0" role="button"><div class="o1"><span class="meta" aria-hidden="true"></span><span class="ot"></span><span class="orole" hidden></span><span class="obr"></span></div>' +
-    '<div class="o2"><b class="ow"></b><span class="os"></span></div><div class="o3"></div></div><ul class="okids"></ul>';
+  li.innerHTML = '<div class="onode" tabindex="0" role="button"><div class="o1"><span class="meta" aria-hidden="true"></span><span class="ot"></span><span class="orunning" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-3.2-5"/></svg><span></span></span><span class="orole" hidden></span><span class="obr"></span></div>' +
+    '<div class="o2"><b class="ow"></b><span class="os"></span></div><div class="o3"></div><div class="oactions"><button type="button" class="oarchive">' + T('存档') + '</button><button type="button" class="orecap">' + T('回顾进展') + '</button><button type="button" class="oresume" hidden>' + T('刷新并继续') + '</button></div></div><ul class="okids"></ul>';
   x = { li, box: li.firstChild, kids: li.lastChild, pt: 0 }; x.box.dataset.sid = sid; onodes.set(sid, x); return x;
 }
 // 让 ul 里正好是这几个窗口、按这个顺序；位置对的不动（挪动会打断悬停和焦点）
@@ -2753,6 +3249,10 @@ function orgPlace(ul, sids) {
 // 悬停时的依据：一句人话
 function orgWhy(sid, M, st) {
   const x = M.nd(sid), role = M.role(sid), b = M.boss(sid), bn = b ? shortName(M.S.get(b)) : '';
+  if (x.via === 'workflow') {
+    const parent = b || x.workflowParent;
+    return parent ? T('实际委派父线程') + '：' + (b ? bn + ' · ' : '') + parent : x.workflowRole === 'chief' ? T('本任务总负责人，目标来自 YOU（你）；未接管外部聊天。') : T('父线程尚未核验');
+  }
   if (role === 'chief') return T('总管，直接归你');
   if (role === 'lead') return T(b ? '项目负责人，归总管' : '项目负责人，你直接带');
   if (role === 'head') return T(!b ? '分支负责人，你直接带' : b === M.chief ? '分支负责人，归总管' : '分支负责人，归 ' + bn);
@@ -2772,24 +3272,33 @@ function orgWhy(sid, M, st) {
 }
 // 第三行：短名（和标题不一样时：「khalil-p2 派的」、悬停的依据都用短名称呼窗口）· 模型 · 上下文 · 几个子 agent 在跑 · 这一轮谁派的（只在跑的时候写）
 function orgMeta(s, v, M) {
-  const m = modelName(s.model), f = M.nd(s.sid).for, sn = shortName(s), t = String(s.title || '');
-  return [sn && !t.includes(sn) ? sn : '', s.provider === 'codex' ? ['Codex', m ? m.name : ''].filter(Boolean).join(' ') : m ? m.name + (m.ver ? ' ' + m.ver : '') : '',
+  const nd = M.nd(s.sid), m = modelName(s.model), f = nd.for, sn = shortName(s), t = String(s.title || '');
+  return [nd.via === 'workflow' ? T(WORKFLOW_ROLES[nd.workflowRole] || nd.workflowRole || '任务内独立线程') : '', sn && !t.includes(sn) ? sn : '', nd.via === 'workflow' && nd.actualModel ? T('实际模型') + '：' + nd.actualModel : s.provider === 'codex' ? ['Codex', m ? m.name : ''].filter(Boolean).join(' ') : m ? m.name + (m.ver ? ' ' + m.ver : '') : '',
     typeof s.ctx === 'number' && s.ctx > 0 ? T(ctxText(s.ctx)) : '',
     s.sub > 0 ? T(s.sub + ' 个子 agent 在跑') : '',
     !v.live ? '' : f === 'you' ? T('你派的') : typeof f === 'string' && f !== s.sid && M.S.has(f) ? T(shortName(M.S.get(f)) + ' 派的') : ''].filter(Boolean).join(' · ');
 }
 // 一个窗口的方块。状态的 class 和墙上卡片同一套（s-busy、alert、bg…），点和颜色、呼吸动画都照搬墙上的样式
+const orgLive = v => !!(v && v.live); // Same predicate for the hub count and each visible running badge.
 function orgBox(sid, M, st) {
   const x = orgNode(sid), b = x.box, s = M.S.get(sid), c = cards.get(sid), v = (c && c.v) || view(s), role = M.role(sid);
   const cls = 'onode s-' + v.k + (v.need ? ' s-' + v.need : v.quiet ? ' s-' + v.quiet : '') + (v.alert ? ' alert' : '') + (v.bg ? ' bg' : '') + (role === 'former' ? ' former' : '') +
     (b.classList.contains('hot') ? ' hot' : '') + (b.classList.contains('ping') ? ' ping' : '');
   if (b.className !== cls) b.className = cls;
   setText($('.ot', b), s.title || '');
+  const running = $('.orunning', b); running.hidden = !orgLive(v); setText($('span', running), orgLive(v) ? T('运行中') : '');
   const tag = ORG_ROLE[role] || '', rl = $('.orole', b); setText(rl, tag ? T(tag) : ''); if (rl.hidden === !!tag) rl.hidden = !tag;
   const nk = M.under.get(sid) || 0;
   setText($('.obr', b), [role === 'chief' && M.gen ? T('第 ' + M.gen + ' 代') : '', nk ? T('带 ' + nk + ' 个') : ''].filter(Boolean).join(' · '));
   const cv = coverOf(s, v); setText($('.ow', b), T(v.label)); setText($('.os', b), (v.need === 'reply' && cv.ask) || cv.head || '');
   setText($('.o3', b), orgMeta(s, v, M));
+  const archiveButton = $('.oarchive', b); archiveButton.disabled = archivePending.has(sid);
+  const resumeButton = $('.oresume', b), workflowNode = M.nd(sid);
+  resumeButton.hidden = !workflowNode.workflowResumable && !workflowNode.workflowApproval && !resumePending.has(sid);
+  resumeButton.disabled = resumePending.has(sid);
+  setText(resumeButton, T(resumeButton.disabled ? '正在恢复…' : workflowNode.workflowApproval ? '查看授权' : '刷新并继续'));
+  setText(archiveButton, T(archiveButton.disabled ? '存档中…' : '存档'));
+  archiveButton.title = T(s.nativeArchive ? '归档到 Codex，保留对话记录' : '归档：没留下东西的删掉，其余留着、能接回来');
   const why = orgWhy(sid, M, st); if (b.dataset.why !== why) b.dataset.why = why;
   const al = [s.title, tag ? T(tag) : '', T(v.label), why].filter(Boolean).join(' · '); if (b.getAttribute('aria-label') !== al) b.setAttribute('aria-label', al);
 }
@@ -2817,7 +3326,7 @@ function orgSkel() {
   O.innerHTML = '<div class="otop"><div class="oyou"><b></b><span class="oyn num"></span><span class="oyn2 num"></span></div><i class="ovl o1l"></i><ul class="ochief"></ul><i class="ovl o2l"></i></div>' +
     '<div class="oscroll"><div class="orow"><svg class="obus" width="1" height="1" aria-hidden="true"><path class="base"/><path class="hot"/></svg></div></div>' +
     '<div class="ofx" aria-hidden="true"></div><div id="otip" role="tooltip" hidden></div>';
-  $('.oyou b', O).textContent = T('你');
+  $('.oyou b', O).textContent = T('YOU（你）');
   $('.oscroll', O).addEventListener('scroll', () => { orgLines(); orgTip(); }, { passive: true });   // 横着滚：总线跟着 trunk 的位置重画
   return O;
 }
@@ -2826,17 +3335,105 @@ function orgYouLine(n, run, act) {
   const num = (t, cls, k) => (k > 0 ? esc(T(t)).replace(/^(\d+)/, '<b class="' + cls + '">$1</b>') : esc(T(t)));
   return [esc(T(n + ' 个窗口')), num(run + ' 个在跑', 'orun', run), act > 0 ? num(act + ' 件事等你', 'oact', act) : esc(T('没有事等你'))].join(' · ');
 }
+// workflow-radial:start — fixed role slots; host snapshots are the only state source.
+let radialSelection = null;
+const radialDispatchSeen = new Set();
+let radialDispatchReady = false;
+const RADIAL_ROLES = ['research', 'checkout', 'coding', 'qa', 'tester', 'documentation', 'decomposition', 'operator'];
+const RADIAL_NAMES = { chief: 'Chief of Staff', research: 'Search Lead', checkout: 'Checkout Lead', coding: 'Coding Lead', qa: 'QA Lead', tester: 'Test Lead', documentation: 'Docs Lead', decomposition: 'Planning Lead', operator: 'Operations Lead' };
+const radialRole = role => role === 'search' ? 'research' : role;
+function radialEvents(jobs) {
+  const fresh = new Set();
+  for (const job of jobs) for (const stage of job.stages) if (stage.dispatchId) {
+    if (radialDispatchReady && !radialDispatchSeen.has(stage.dispatchId)) fresh.add(stage.dispatchId);
+    radialDispatchSeen.add(stage.dispatchId);
+  }
+  radialDispatchReady = true;
+  return fresh;
+}
+function paintWorkflowRadial(O, M, st) {
+  const jobs = st.org?.radialJobs || [], fresh = radialEvents(jobs);
+  if (!jobs.length) { if (orgMapL?.workflow) orgMapL = null; O.classList.remove('workflow-map'); $('.wr-board', O)?.remove(); $('.wr-select', O)?.remove(); return false; }
+  if (radialSelection !== '*' && !jobs.some(j => j.id === radialSelection)) radialSelection = jobs.find(j => ['running', 'queued', 'needs_input'].includes(j.status))?.id || jobs[0].id;
+  let select = $('.wr-select', O);
+  if (!select) {
+    select = document.createElement('select'); select.className = 'wr-select'; select.setAttribute('aria-label', T('工作流放射图'));
+    select.addEventListener('change', () => { radialSelection = select.value; orgV.user = false; orgMapL = null; paintOrg(last); }); O.append(select);
+  }
+  const options = '<option value="*">' + esc(T('全部会话')) + '</option>' + jobs.map(j => '<option value="' + esc(j.id) + '">' + esc(j.prompt || j.id) + '</option>').join('');
+  if (select.dataset.options !== options) { select.innerHTML = options; select.dataset.options = options; } select.value = radialSelection;
+  const job = jobs.find(j => j.id === radialSelection);
+  O.classList.toggle('workflow-map', !!job);
+  if (!job) { $('.wr-board', O)?.remove(); return false; }
+  let board = $('.wr-board', O);
+  if (!board) {
+    board = document.createElement('div'); board.className = 'wr-board';
+    board.innerHTML = '<svg class="wr-lines" aria-hidden="true" viewBox="-800 -550 1600 1100"></svg><div class="wr-you">YOU</div>';
+    $('.omw', O).append(board);
+  }
+  const svg = $('.wr-lines', board), visible = new Set();
+  const label = status => T(({ running: '运行中', queued: '排队中', waiting: '需要你决定', completed: '已完成', stopped: '已停止', idle: '未分配' })[status] || '未分配');
+  const point = (i, rx, ry) => { const a = -Math.PI / 2 + i * Math.PI / 4; return [Math.round(Math.cos(a) * rx), Math.round(Math.sin(a) * ry)]; };
+  const roles = ['chief', ...RADIAL_ROLES];
+  for (const role of roles) {
+    let slot = board.querySelector('[data-wr-role="' + role + '"]');
+    if (!slot) { slot = document.createElement('section'); slot.className = 'wr-slot'; slot.dataset.wrRole = role; slot.innerHTML = '<ul class="wr-node"></ul><div class="wr-empty"></div>'; board.append(slot); }
+    const i = RADIAL_ROLES.indexOf(role), [x, y] = role === 'chief' ? [0, 45] : point(i, 380, 240);
+    slot.style.left = x + 'px'; slot.style.top = y + 'px';
+    const stages = job.stages.filter(s => radialRole(s.role) === role);
+    const priority = s => ({ running: 0, waiting: 1, queued: 2 })[s.status] ?? 3;
+    const stage = stages.slice().sort((a, b) => b.index - a.index)[0]; // each batch has unique roles; old failures must not eclipse a later completion
+    const status = stage?.status || 'idle', text = status === 'waiting' ? stage.decision || stage.task : stage?.task || '';
+    slot.dataset.state = status;
+    const sid = stage?.threadId, node = $('.wr-node', slot), empty = $('.wr-empty', slot);
+    if (sid && M.S.has(sid)) {
+      visible.add(sid); orgPlace(node, [sid]); empty.hidden = true;
+      const n = onodes.get(sid); n.li.className = 'oli'; n.li.style.transform = ''; n.kids.textContent = '';
+      n.box.className = 'onode'; // Transcript busy/waiting may lag; use the host stage state here.
+      setText($('.ot', n.box), RADIAL_NAMES[role]);
+      $('.orole', n.box).hidden = true; $('.orunning', n.box).hidden = status !== 'running';
+      setText($('.ow', n.box), stage.waitingApproval ? T('等待授权') : role === 'chief' && status === 'running' ? T('正在拆分任务') : label(status));
+      setText($('.os', n.box), text); n.box.title = text;
+      n.box.setAttribute('aria-label', RADIAL_NAMES[role] + ' · ' + label(status) + ' · ' + text);
+    } else {
+      node.replaceChildren(); empty.hidden = false; empty.textContent = RADIAL_NAMES[role] + '\n' + (role === 'chief' && status === 'running' ? T('正在拆分任务') : label(status)) + '\n' + text;
+    }
+    if (role === 'chief') continue;
+    let tasks = board.querySelector('[data-wr-tasks="' + role + '"]');
+    if (!tasks) { tasks = document.createElement('div'); tasks.className = 'wr-tasks'; tasks.dataset.wrTasks = role; board.append(tasks); }
+    const [tx, ty] = point(i, 660, 460); tasks.style.left = tx + 'px'; tasks.style.top = ty + 'px';
+    const taskHTML = stages.map(s => '<button type="button" data-wr-stage="' + s.index + '"' + (s.threadId && M.S.has(s.threadId) ? '' : ' disabled') + ' title="' + esc(s.task) + '"><b>' + esc(label(s.status)) + '</b> ' + esc(s.task) + (s.status === 'waiting' ? '<br>' + esc(s.decision) : '') + '</button>').join('') || '<span>' + esc(T('未分配')) + '</span>';
+    if (tasks.dataset.content !== taskHTML) { tasks.innerHTML = taskHTML; tasks.dataset.content = taskHTML; }
+    tasks.onclick = e => { const b = e.target.closest('[data-wr-stage]'); const s = b && stages.find(s => String(s.index) === b.dataset.wrStage); if (s?.threadId && M.S.has(s.threadId)) zoomCard(s.threadId); };
+    let line = svg.querySelector('[data-wr-line="' + role + '"]');
+    if (!line) { line = document.createElementNS('http://www.w3.org/2000/svg', 'path'); line.dataset.wrLine = role; svg.append(line); }
+    line.setAttribute('d', 'M0 45L' + x + ' ' + y + 'L' + tx + ' ' + ty);
+    if (stages.some(s => fresh.has(s.dispatchId)) && !calm.matches) {
+      line.getAnimations().forEach(a => a.cancel());
+      line.animate([{ stroke: 'var(--accent)', strokeWidth: 4, opacity: 1 }, { stroke: 'var(--hair-3)', strokeWidth: 1, opacity: 1 }], { duration: 900 });
+    }
+  }
+  // Keep the original node objects/actions; hidden historical nodes remain available in All sessions.
+  for (const [sid, n] of onodes) if (!visible.has(sid) && n.li.closest('.wr-board')) n.li.remove();
+  orgMapSp = null;
+  const changed = !orgMapL?.workflow || orgMapL.workflow !== job.id;
+  orgMapL = { workflow: job.id, pos: new Map(), hub: { w: 240, h: 180 }, box: { x0: -800, y0: -550, x1: 800, y1: 550 } };
+  if (changed || !orgV.user) orgMapFit(false); else orgMapApply(false);
+  return true;
+}
+// workflow-radial:end
 function paintOrg(st) {
   const O = orgSkel(), M = orgM = orgModel(st);
   for (const [sid, x] of onodes) if (!M.S.has(sid)) { clearTimeout(x.pt); x.li.remove(); onodes.delete(sid); }
   if (orgHot && !M.S.has(orgHot)) orgHot = null;
   // 你：一句平常话。在跑 = 墙上的「运行中」（含后台在跑），等你 = 要你处理的那一类（等你选、停住了、待跟进：琥珀色的那些），和墙上「按状态」的第一列同一个判断
-  let nRun = 0, nAct = 0; for (const sid of M.S.keys()) { const v = (cards.get(sid) || {}).v; if (!v) continue; if (v.live) nRun++; if (dotOf(v) === 'act') nAct++; }
+  let nRun = 0, nAct = 0; for (const sid of M.S.keys()) { const v = (cards.get(sid) || {}).v; if (!v) continue; if (orgLive(v)) nRun++; if (dotOf(v) === 'act') nAct++; }
   const y1 = $('.oyou .oyn', O), yl = orgYouLine(M.S.size, nRun, nAct); if (y1.dataset.k !== yl) { y1.dataset.k = yl; y1.innerHTML = yl; }
   // 第二行：你直接带（总管、没有总管时的负责人也算）· 有窗口在带 · 按项目挂上（via dept：没有窗口在管、服务按项目挂到岗位上的，11/17）。三个数加起来是窗口数；最后一个是 0 时不写
   let nDirect = 0, nPlaced = 0; for (const sid of M.S.keys()) { if (!M.boss(sid)) nDirect++; else if (M.nd(sid).via === 'dept') nPlaced++; }
   setText($('.oyou .oyn2', O), [T(nDirect + ' 个你直接带'), T((M.S.size - nDirect - nPlaced) + ' 个有窗口在带')].concat(nPlaced ? [T(nPlaced + ' 个按项目挂上')] : []).join(' · '));
   for (const sid of M.S.keys()) orgBox(sid, M, st);
+  if (orgShape === 'map' && paintWorkflowRadial(O, M, st)) return;
   O.classList.toggle('nochief', !M.chief); O.classList.toggle('nocols', !M.cols.length);
   orgPlace($('.ochief', O), M.chief ? [M.chief] : []);
   if (orgShape === 'map') orgMapPaint(O, M);       // 放射：同一批方块，换个摆法
@@ -2940,6 +3537,36 @@ function orgTip() {
   tip.style.top = Math.round(r.bottom + Math.min(h / 2, 10) - h - or.top) + 'px';
 }
 function orgSetHot(sid) { if (orgHot === sid) return; orgHot = sid; orgMark(); orgLines(); orgTip(); }
+const resumePending = new Set(), resumeRequests = new Map();
+async function orgResume(sid) {
+  if (resumePending.has(sid)) return;
+  const node = last?.org?.nodes?.[sid];
+  if (node?.workflowApproval) return openWorkflows(node.workflowId);
+  if (!node?.workflowResumable) return toast('任务当前不能继续，请刷新状态后再试。');
+  const key = node.workflowId + ':' + node.workflowStageIndex;
+  if (!resumeRequests.has(key)) resumeRequests.set(key, crypto.randomUUID());
+  resumePending.add(sid);
+  const button = onodes.get(sid)?.box.querySelector('.oresume');
+  if (button) { button.disabled = true; button.textContent = T('正在恢复…'); }
+  try {
+    const result = await api('/api/workflows/action', { id: node.workflowId, action: 'resume', expectedStage: node.workflowStageIndex, requestId: resumeRequests.get(key) });
+    if (!result.ok) { resumeRequests.delete(key); throw new Error(result.error); }
+    toast('已请求继续任务');
+  } catch (error) { toast(error.message); }
+  finally {
+    resumePending.delete(sid);
+    if (button) { button.disabled = false; button.textContent = T('刷新并继续'); }
+    refresh();
+  }
+}
+async function orgArchive(sid) {
+  const session = cards.get(sid)?.s;
+  if (!session || archivePending.has(sid)) return;
+  const button = onodes.get(sid)?.box.querySelector('.oarchive');
+  if (button) { button.disabled = true; button.textContent = T('存档中…'); }
+  try { await doArchive(session, false); }
+  finally { if (button) { button.disabled = false; button.textContent = T('存档'); } }
+}
 const orgSeen = (el) => { const r = el.getBoundingClientRect(), m = $('main').getBoundingClientRect(); return r.bottom > m.top && r.top < m.bottom && r.right > m.left && r.left < m.right; };
 // 一条消息飞过去：青色小点从发信人飞到收信人（一次性，约 700ms），到了收信人的描边亮一下。发信人不在画面里、或减少动态效果时不飞，只亮
 function orgFly(from, to) {
@@ -3035,8 +3662,8 @@ function orgMapSkel(O) {
     '<ul class="omnodes"></ul><div class="omlabs"></div></div></div>' +
     L('<div class="seg omctl" role="group" aria-label="画布"><button data-omz="out" aria-label="画布缩小" title="画布缩小">−</button><button data-omz="fit" title="把整张图放回窗口里（双击空白处也行）">适应窗口</button><button data-omz="in" aria-label="画布放大" title="画布放大">+</button></div>') +
     '<div class="ofx" aria-hidden="true"></div><div id="otip" role="tooltip" hidden></div>';
-  $('.oyou b', O).textContent = T('你');
-  const v = $('.omv', O), free = (e) => !e.target.closest('.onode, .oyou');
+  $('.oyou b', O).textContent = T('YOU（你）');
+  const v = $('.omv', O), free = (e) => !e.target.closest('.onode, .oyou, .wr-tasks, .wr-select');
   // 画布：两指滑 / 滚轮 = 挪；捏合、⌘ 或 Ctrl + 滚轮 = 以指针为中心缩放；按住空白处拖 = 挪；双击空白处 = 放回窗口里
   v.addEventListener('wheel', (e) => { e.preventDefault(); if (e.ctrlKey || e.metaKey) orgMapZoom(Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY); else { orgV.x -= e.deltaX; orgV.y -= e.deltaY; orgV.user = true; orgMapApply(); } }, { passive: false });
   let g0 = 1;                                           // WebKit 的捏合是 gesture 事件（Chromium 是带 ctrlKey 的 wheel）
@@ -3079,6 +3706,7 @@ function orgMapPaint(O, M) {
 }
 // 量方块（只量变过的）→ 算布局 → 摆上去 → 画线；他没自己拖过 / 缩放过，就把整张图放回窗口里
 function orgMapArrange() {
+  if ($('#org').classList.contains('workflow-map')) { if (!orgV.user) orgMapFit(false); return; }
   const O = $('#org'), sp = orgMapSp, v = $('.omv', O); if (!sp || !v || !v.clientWidth) return;
   const top = $('.otop', O), sz = (id) => orgMapWH.get(id) || { w: 180, h: 26, k: '' };
   for (const [sid, x] of onodes) {                     // 大小只跟职级、标题、它带几个、有没有第二行有关；展开着的那个（hot1）量出来是展开的大小，先用上一次的
@@ -3105,6 +3733,7 @@ function orgMapArrange() {
 }
 // 线：上级方块的边 → 下级朝圆心的那一头，直线。底线一条 path 一次描完（墨线半透明，分开描交叉处会叠深）；悬停的那一串另描一条
 function orgMapLines() {
+  if ($('#org').classList.contains('workflow-map')) return;
   const O = $('#org'), M = orgM, L0 = orgMapL, sv = $('.omlines', O); if (!M || !L0 || !sv) return;
   const top = $('.otop', O), you = $('.oyou', top), ce = M.chief && onodes.get(M.chief), r1 = (n) => Math.round(n * 10) / 10;
   const rect = (el) => ({ l: el.offsetLeft - L0.hub.w / 2, t: el.offsetTop - L0.hub.h / 2, w: el.offsetWidth, h: el.offsetHeight });
@@ -3174,11 +3803,11 @@ document.querySelectorAll('#oshape button').forEach((b) => b.setAttribute('aria-
 {
   const O = $('#org');
   O.addEventListener('mouseover', (e) => { const b = e.target.closest('.onode'); if (b) orgSetHot(b.dataset.sid); });
-  O.addEventListener('mouseout', (e) => { const to = e.relatedTarget; if (to && to.closest && to.closest('#org .onode')) return; const f = document.activeElement; orgSetHot(f && O.contains(f) && f.classList.contains('onode') ? f.dataset.sid : null); });
+  O.addEventListener('mouseout', (e) => { const to = e.relatedTarget; if (to && to.closest && to.closest('#org .onode')) return; const f = document.activeElement?.closest('.onode'); orgSetHot(f && O.contains(f) ? f.dataset.sid : null); });
   O.addEventListener('focusin', (e) => { const b = e.target.closest('.onode'); if (b) orgSetHot(b.dataset.sid); });
   O.addEventListener('focusout', (e) => { const to = e.relatedTarget; if (!(to && to.closest && to.closest('#org .onode'))) orgSetHot(null); });
-  O.addEventListener('click', (e) => { const b = e.target.closest('.onode'); if (!b) return; orgZoomAt = Date.now(); zoomCard(b.dataset.sid); });     // 点一个窗口 = 放大看它（和墙上 ⌘O / 双击封面同一个大窗口）
-  O.addEventListener('keydown', (e) => { const b = e.target.closest && e.target.closest('.onode'); if (!b || (e.key !== 'Enter' && e.key !== ' ')) return; e.preventDefault(); orgZoomAt = Date.now(); zoomCard(b.dataset.sid); });
+  O.addEventListener('click', (e) => { const b = e.target.closest('.onode'); if (!b) return; if (e.target.closest('.oresume')) { e.stopPropagation(); orgResume(b.dataset.sid); return; } if (e.target.closest('.oarchive')) { e.stopPropagation(); orgArchive(b.dataset.sid); return; } if (e.target.closest('.orecap')) { e.stopPropagation(); openRecap(b.dataset.sid, cards.get(b.dataset.sid)?.s.title || ''); return; } orgZoomAt = Date.now(); zoomCard(b.dataset.sid); });     // 点一个窗口 = 放大看它（和墙上 ⌘O / 双击封面同一个大窗口）
+  O.addEventListener('keydown', (e) => { if (e.target.closest('.oactions')) return; const b = e.target.closest && e.target.closest('.onode'); if (!b || (e.key !== 'Enter' && e.key !== ' ')) return; e.preventDefault(); orgZoomAt = Date.now(); zoomCard(b.dataset.sid); });
 }
 
 // ── 全局 ──

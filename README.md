@@ -1,4 +1,8 @@
+> **Development snapshot · 2026-11-26:** Frozen Windows / Codex source for the showcase. Targeted logic checks passed; full integration and UI acceptance remain incomplete. Runtime secrets and conversations are excluded.
+
 # cc-board
+
+**[Windows / Codex · 中英文实机展示](#windows-codex-showcase)**
 
 > **Windows / Codex adaptation:** This repository includes a Windows port of [Lfrangt/cc-board](https://github.com/Lfrangt/cc-board). Requires Node.js 22+, Codex CLI, and a browser. Double-click `Start-CCBoard.cmd`; run `Stop-CCBoard.ps1` to stop the board. See [Windows instructions](WINDOWS-使用说明.txt) for supported features and limitations. The upstream macOS documentation follows below. Original MIT license and history are preserved.
 >
@@ -158,3 +162,60 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 ## License
 
 [MIT](LICENSE) for the code. The launch video and preview in `docs/media/` are not covered by it: the soundtrack uses Apple Loops from GarageBand, which Apple licenses for use in finished works, not for redistribution on their own.
+
+
+---
+
+<a id="windows-codex-showcase"></a>
+## Windows / Codex Showcase · 多代理开发总控台
+
+**把分散的 AI 开发会话，组织成一张看得见的协作网络。**  
+**Turn scattered AI coding sessions into a visible, coordinated workspace.**
+
+PonyMa777 的 Windows / Codex 扩展把项目负责人、执行角色、任务状态和交付记录带到同一个界面。你可以从放射图看分工，从层级树看委派关系，从状态提示找到需要自己介入的位置。目标是让一个人管理多条 AI 工作流时，仍然清楚谁在做什么、工作交给了谁、哪里还没完成。
+
+The Windows / Codex extension brings project leadership, execution roles, task states and delivery records into one workspace. The radial view reveals the division of work; the hierarchy reveals delegation; explicit status cues show where human input is needed. The ambition is practical: keep multi-agent development understandable as the number of concurrent conversations grows.
+
+> **2026-11-26 development snapshot / 开发快照：** The screenshots below were captured from the real local application, not a mockup. Corresponding newer source is published on [showcase-development-20261126](https://github.com/PonyMa777/cc-board/tree/showcase-development-20261126). The main branch retains the earlier runtime; use the snapshot branch to inspect these additions. The pictured task includes a blocked testing stage: screenshots demonstrate the interface, not end-to-end acceptance or a performance benchmark.  
+> 下图来自真实本地界面，对应新增源码在公开开发分支。截图中的测试阶段仍有受阻状态；不把界面截图当作完整流程验收、生产成熟度或性能证明。
+
+### 01 · 放射式指挥视图 / Radial command view
+
+![CCboard real radial view](docs/media/showcase/ccboard-radial.jpg)
+
+以 You 和 Chief 为中心，角色向外展开，任务挂在角色外围。已完成、未分配、需要决定等状态直接显示在节点上；琥珀色提示需要人介入。图中未分配节点是角色位置，不表示这些代理已经开工。
+
+You and the Chief sit at the center, with role leads and their tasks arranged around them. Explicit labels distinguish completed work, unassigned roles and decisions awaiting input. Unassigned nodes are role slots, not evidence of active agents.
+
+### 02 · 层级委派关系 / Delegation you can follow
+
+![CCboard real hierarchy view](docs/media/showcase/ccboard-hierarchy.jpg)
+
+把负责人、实现角色和测试角色的关系展开成树，直接看到任务沿哪条路径传递。每张卡保留状态与操作入口；需要决定或执行受阻时，问题不会淹没在一长串聊天窗口里。界面中的计数仅为拍摄时会话快照。
+
+The hierarchy makes responsibility and handoffs visible: lead, implementation and testing stages remain connected. State labels keep blocked work and pending decisions visible alongside the task. On-screen counts are a momentary session snapshot, not throughput claims.
+
+### 开发快照里的工程能力 / Engineering in this snapshot
+
+| 能力 / Capability | 实现与边界 / Implementation and boundary |
+|---|---|
+| Project Chief | 独立项目讨论入口，明确执行指令后进入派工；不是自动接管任意桌面聊天。 Dedicated project discussion and explicit execution dispatch. |
+| 有界并行 / Bounded parallelism | 支持 2–4 个任务的并行委派，最多 2 个执行槽；同一项目限制单写入者。 Batches of 2–4 assignments, two execution slots and a single project writer. |
+| 有依据的状态 / Evidence-based state | 排队与真正开工分开；宿主确认执行后才标记运行。 Queued work is distinct from acknowledged execution. |
+| 可追踪交接 / Traceable handoffs | 阶段、角色、执行记录、失败与恢复状态可追踪。 Stage and role records retain handoff and recovery context. |
+| 独立验证 / Independent validation | 测试副本、命令结果与源版本证据为 QA 提供核对依据；不保证每个任务都会自动完成。 Isolated validation and source-version evidence support review; completion is not guaranteed. |
+| 进展回顾 / Progress recap | 从本地记录提取目标、进展和最近问答，保留来源；是摘取，不是对结论真实性的自动背书。 Source-linked extraction, not automatic verification of claims. |
+
+对应实现 / Source: [workflows.mjs](https://github.com/PonyMa777/cc-board/blob/showcase-development-20261126/workflows.mjs), [workflow-org.mjs](https://github.com/PonyMa777/cc-board/blob/showcase-development-20261126/workflow-org.mjs), [project-chief.mjs](https://github.com/PonyMa777/cc-board/blob/showcase-development-20261126/project-chief.mjs), [recap.mjs](https://github.com/PonyMa777/cc-board/blob/showcase-development-20261126/recap.mjs).
+
+**本次核对 / Checks for this publication:** On a frozen source copy, `workflow-org.test.mjs`, `workflows-parallel.test.mjs` and all **19** `recap.test.mjs` cases passed. These are isolated logic/fixture checks; no production throughput, full browser animation acceptance or live multi-model performance claim is made. 当前快照未完成完整 UI 与所有集成测试验收。
+
+### 从“同时开很多聊天”走向“清楚地管理一支 AI 团队”
+
+项目最有价值的方向，是把分工、执行、交接、受阻和验证放到同一张可阅读的工作地图上。人负责目标与判断，系统让协作过程可见、可追踪。这就是 CCboard Windows / Codex 扩展正在构建的能力。
+
+### From many open chats to a team you can actually oversee
+
+The value is in making delegation, execution, handoffs, blockers and verification part of one readable workspace. People retain the goals and judgment; the board makes the collaboration visible and traceable. That is the direction of the CCboard Windows / Codex extension.
+
+**Credit / 致谢：** Windows / Codex adaptation by PonyMa777, built on [Lfrangt/cc-board](https://github.com/Lfrangt/cc-board) by Khalil Wu. Original MIT license and upstream history are preserved. The upstream macOS documentation above describes that platform; Windows support and this development snapshot have their own boundaries.
